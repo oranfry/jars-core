@@ -6,20 +6,22 @@ class Record
 {
     private $data;
     private $dirty = false;
-    private $extension;
-    private $filesystem;
-    private $format;
+    private $extension = 'json';
+    private $jars;
+    private $format = 'json';
     private $id;
     private $table;
     private $version;
 
-    public function __construct(Filesystem $filesystem, string $table, ?string $id = null, ?string $version = null)
+    public function __construct(Jars $jars, string $table, ?string $id = null, ?string $version = null)
     {
-        $tableinfo = @BlendsConfig::get()->tables[$table];
+        $this->jars = $jars;
 
-        $this->filesystem = $filesystem;
-        $this->format = @$tableinfo->format ?? 'json';
-        $this->extension = @$tableinfo->extension ?? 'json';
+        if ($tableinfo = @$this->jars->config()->tables[$table]) {
+            $this->format = @$tableinfo->format;
+            $this->extension = @$tableinfo->extension;
+        }
+
         $this->id = $id;
         $this->table = $table;
 
@@ -124,7 +126,7 @@ class Record
             return;
         }
 
-        $this->filesystem->put($this->file(), $this->export());
+        $this->jars->filesystem()->put($this->file(), $this->export());
     }
 
     public function assertExistence()
@@ -136,12 +138,12 @@ class Record
 
     public function exists()
     {
-        return $this->filesystem->has($this->file());
+        return $this->jars->filesystem()->has($this->file());
     }
 
     public function delete()
     {
-        $this->filesystem->delete($this->file());
+        $this->jars->filesystem()->delete($this->file());
     }
 
     private function load()
@@ -149,7 +151,7 @@ class Record
         $this->assertExistence();
 
         $file = $this->file();
-        $content = $this->filesystem->get($file);
+        $content = $this->jars->filesystem()->get($file);
 
         if ($this->format == 'binary') {
             $this->data = ['content' => $content];
@@ -170,11 +172,11 @@ class Record
 
         $version_path = $this->version ? 'past/' . $this->version : 'current';
 
-        return Config::get()->db_home . "/" . $version_path . "/records/{$this->table}/{$this->id}" . ($this->extension ? '.' . $this->extension : null);
+        return $this->jars->db_path($version_path . "/records/{$this->table}/{$this->id}" . ($this->extension ? '.' . $this->extension : null));
     }
 
-    public static function of(Filesystem $filesystem, string $table, string $id = null, ?string $version = null)
+    public static function of(Jars $jars, string $table, string $id = null, ?string $version = null)
     {
-        return new Record($filesystem, $table, $id, $version);
+        return new Record($jars, $table, $id, $version);
     }
 }

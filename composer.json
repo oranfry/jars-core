@@ -2,7 +2,7 @@
     "name": "oranfry/jars-core",
     "version": "1.0.0",
     "require": {
-        "oranfry/jars-contracts": "dev-master"
+        "oranfry/jars-contracts": "*"
     },
     "autoload": {
         "psr-4": {

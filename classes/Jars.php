@@ -2,18 +2,30 @@
 
 namespace jars;
 
-class Jars implements Client
+class Jars implements contract\Client
 {
-    private static $head;
-    private static $version_number;
-    public static $verified_tokens = [];
-
     private $db_home;
+    private $filesystem;
+    private $head;
+    private $known_configs = [];
+    private $known_linetypes = [];
+    private $known_reports = [];
     private $portal_home;
     private $token;
+    private $verified_tokens = [];
+    private $version_number;
 
-    function __construct($auth = null)
+    public function __construct(string $portal_home, string $db_home)
     {
+        $this->db_home = $db_home;
+        $this->portal_home = $portal_home;
+
+        $this->filesystem = new Filesystem();
+    }
+
+    public function __clone()
+    {
+        $this->filesystem = clone $this->filesystem;
     }
 
     public static function validate_username(string $username)
@@ -40,22 +52,18 @@ class Jars implements Client
             ;
     }
 
-    public static function login(?Filesystem $filesystem, string $username, string $password, bool $one_time = false)
+    public function login(string $username, string $password, bool $one_time = false)
     {
-        if (!$one_time && is_null($filesystem)) {
-            error_response('Filesystem is required unless creating one-time login');
-        }
-
-        if (!static::validate_username($username)) {
+        if (!$this->validate_username($username)) {
             error_response('Invalid username');
         }
 
-        if (!static::validate_password($password)) {
+        if (!$this->validate_password($password)) {
             error_response('Invalid password');
         }
 
-        if (($root_username = @BlendsConfig::get()->root_username) && $username == $root_username) {
-            if (!($root_password = @BlendsConfig::get()->root_password)) {
+        if (($root_username = $this->config()->root_username) && $username == $root_username) {
+            if (!($root_password = $this->config()->root_password)) {
                 error_response('Root username is set up without a root password');
             }
 
@@ -73,49 +81,45 @@ class Jars implements Client
             'used' => time(),
         ];
 
-        static::$verified_tokens[$random_bits] = $line;
+        $this->verified_tokens[$random_bits] = $line;
+
+        $this->token = $random_bits;
 
         if ($one_time) {
-            return $random_bits;
+            return $this->token;
         }
 
         // convert token from one-time to persistent
 
-        list($line) = static::save($random_bits, $filesystem, [$line]);
-        unset(static::$verified_tokens[$random_bits]);
+        list($line) = $this->save([$line]);
+        unset($this->verified_tokens[$random_bits]);
 
-        $token = $line->id . ':' . $random_bits;
+        $this->verified_tokens[$this->token = $line->id . ':' . $random_bits] = $line;
 
-        static::$verified_tokens[$token] = $line;
-
-        return $token;
+        return $this->token;
     }
 
-    public static function token_user(string $token, Filesystem $filesystem)
+    public function token_user(string $token)
     {
-        if (!static::verify_token($token, $filesystem)) {
+        if (!$this->verify_token($token)) {
             return;
         }
 
-        return static::$verified_tokens[$token]->user;
+        return $this->verified_tokens[$token]->user;
     }
 
-    public static function token_username(string $token, Filesystem $filesystem)
+    public function token_username(string $token)
     {
-        if (!static::verify_token($token, $filesystem)) {
+        if (!$this->verify_token($token)) {
             return;
         }
 
-        return static::$verified_tokens[$token]->username ?? @BlendsConfig::get()->root_username;
+        return $this->verified_tokens[$token]->username ?? $this->config()->root_username;
     }
 
-    public static function verify_token(string $token, Filesystem $filesystem)
+    public function verify_token(string $token)
     {
-        if (!$db_home = @Config::get()->db_home) {
-            error_response('db_home not defined', 500);
-        }
-
-        if (isset(static::$verified_tokens[$token])) {
+        if (isset($this->verified_tokens[$token])) {
             return true;
         }
 
@@ -128,7 +132,7 @@ class Jars implements Client
         list (, $id, $random_bits) = $groups;
 
         $time = microtime(true);
-        $line = Linetype::load(null, $filesystem, 'token')->get(null, $filesystem, $id);
+        $line = $this->linetype('token', true)->get(null, $id);
 
         if (
             !$line
@@ -145,63 +149,59 @@ class Jars implements Client
         $user = null;
 
         if (@$line->user) {
-            $userfile = $db_home . '/current/records/users/' . $line->user . '.json';
+            $userfile = $this->db_home . '/current/records/users/' . $line->user . '.json';
 
-            if (!$filesystem->has($userfile)) {
+            if (!$this->filesystem->has($userfile)) {
                 error_response('Token Verification Error 1', 500);
             }
 
-            $user = json_decode($filesystem->get($userfile));
+            $user = json_decode($this->filesystem->get($userfile));
         }
 
         $token_object = (object) [
             'token' => $line->token,
             'user' => @$user->id,
-            'username' => @$user->username ?? @BlendsConfig::get()->root_username
+            'username' => @$user->username ?? $this->config()->root_username
         ];
 
-        static::$verified_tokens[$token] = $token_object;
+        $this->verified_tokens[$token] = $token_object;
 
         return true;
     }
 
-    public static function logout(string $token, Filesystem $filesystem)
+    public function logout()
     {
-        if (!static::verify_token($token, $filesystem)) {
+        if (!$this->verify_token($this->token)) {
             return;
         }
 
-        $line = (object)['token' => $token, 'type' => 'token', '_is' => false];
-        Blends::import($token, $filesystem, date('Y-m-d H:i:s'), [$line]);
+        $line = (object)['token' => $this->token, 'type' => 'token', '_is' => false];
+        $this->import(date('Y-m-d H:i:s'), [$line]);
     }
 
-    public static function import(string $token, Filesystem $filesystem, string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null)
+    public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null)
     {
         $affecteds = [];
         $commits = [];
-        $original_filesystem = clone $filesystem;
+        $original_filesystem = clone $this->filesystem;
         $original_filesystem->freeze();
-        $lines = static::import_r($token, $filesystem, $original_filesystem, $timestamp, $lines, $affecteds, $commits, null, $logging);
+        $lines = $this->import_r($original_filesystem, $timestamp, $lines, $affecteds, $commits, null, $logging);
         $meta  = [];
 
-        if (!$db_home = @Config::get()->db_home) {
-            error_response('db_home not defined', 500);
-        }
-
-        if (!$dryrun && file_exists($current_version_file = $db_home . '/version.dat')) {
+        if (!$dryrun && file_exists($current_version_file = $this->db_home . '/version.dat')) {
             $version = trim(file_get_contents($current_version_file));
 
-            `mkdir -p "$db_home/past" && cp -r "$db_home/current" "$db_home/past/$version"`;
+            `mkdir -p "{$this->db_home}/past" && cp -r "{$this->db_home}/current" "{$this->db_home}/past/$version"`;
         }
 
         foreach ($affecteds as $affected) {
             switch ($affected->action) {
                 case 'connect':
-                    (new Link($filesystem, $affected->tablelink, $affected->left))
+                    Link::of($this, $affected->tablelink, $affected->left)
                         ->add($affected->right)
                         ->save();
 
-                    (new Link($filesystem, $affected->tablelink, $affected->right, true))
+                    Link::of($this, $affected->tablelink, $affected->right, true)
                         ->add($affected->left)
                         ->save();
                     break;
@@ -212,11 +212,11 @@ class Jars implements Client
                     break;
 
                 case 'disconnect':
-                    (new Link($filesystem, $affected->tablelink, $affected->left))
+                    Link::of($this, $affected->tablelink, $affected->left)
                         ->remove($affected->right)
                         ->save();
 
-                    (new Link($filesystem, $affected->tablelink, $affected->right, true))
+                    Link::of($this, $affected->tablelink, $affected->right, true)
                         ->remove($affected->left)
                         ->save();
                     break;
@@ -235,28 +235,28 @@ class Jars implements Client
             $updated = [];
 
             foreach ($lines as $line) {
-                $updated[] = Linetype::load($token, $filesystem, $line->type)->get($token, $filesystem, $line->id);
+                $updated[] = $this->linetype($line->type)->get($this->token, $this->filesystem, $line->id);
             }
 
-            $filesystem->revert();
+            $this->filesystem->revert();
 
             return $updated;
         }
 
         $commits = array_filter($commits);
 
-        static::commit($token, $filesystem, $timestamp, $commits, $meta);
+        $this->commit($timestamp, $commits, $meta);
 
         if (defined('BLENDS_PERSIST_PER_IMPORT') && BLENDS_PERSIST_PER_IMPORT) {
-            $filesystem->persist();
+            $this->filesystem->persist();
         }
 
         return $lines;
     }
 
-    public static function import_r(string $token, Filesystem $filesystem, Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null)
+    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null)
     {
-        $config = BlendsConfig::get($token, $filesystem);
+        $config = $this->config($this->token);
 
         foreach ($lines as $line) {
             if (!is_object($line)) {
@@ -269,46 +269,34 @@ class Jars implements Client
         }
 
         foreach ($lines as $line) {
-            Linetype::load($token, $filesystem, $line->type)->import($token, $filesystem, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
+            $this->linetype($line->type)->import($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
         }
 
         foreach ($lines as $line) {
-            Linetype::load($token, $filesystem, $line->type)->recurse_to_children($token, $filesystem, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
+            $this->linetype($line->type)->recurse_to_children($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
         }
 
         return $lines;
     }
 
-    public static function complete(string $token, Filesystem $filesystem, array $lines) : void
+    public static function complete(array $lines) : void
     {
-        if (!Blends::verify_token($token, $filesystem)) {
-            return;
-        }
-
         foreach ($lines as $line) {
-            Linetype::load($token, $filesystem, $line->type)->complete($line);
+            $this->linetype($line->type)->complete($line);
         }
     }
 
-    public static function save(string $token, Filesystem $filesystem, array $lines, bool $dryrun = false)
+    public function save(array $lines, bool $dryrun = false)
     {
         if (!$lines) {
             return $lines;
         }
 
-        if (!Blends::verify_token($token, $filesystem)) {
-            return false;
-        }
-
-        return static::import($token, $filesystem, date('Y-m-d H:i:s'), $lines, $dryrun);
+        return $this->import(date('Y-m-d H:i:s'), $lines, $dryrun);
     }
 
-    private static function commit(string $token, Filesystem $filesystem, $timestamp, array $data, array $meta)
+    private function commit($timestamp, array $data, array $meta)
     {
-        if (!$db_home = @Config::get()->db_home) {
-            error_response('db_home not defined', 500);
-        }
-
         foreach ($data as $id => $commit) {
             if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
                 unset($data[$id]);
@@ -319,21 +307,21 @@ class Jars implements Client
             return;
         }
 
-        if (!is_dir($version_dir = $db_home . '/versions')) {
+        if (!is_dir($version_dir = $this->db_home . '/versions')) {
             mkdir($version_dir, 0777, true);
         }
 
-        $master_record_file = $db_home . '/master.dat';
+        $master_record_file = $this->db_home . '/master.dat';
         $master_meta_file = $master_record_file . '.meta';
-        $current_version_file = $db_home . '/version.dat';
+        $current_version_file = $this->db_home . '/version.dat';
 
-        if (static::$head === null) {
+        if ($this->head === null) {
             if (file_exists($current_version_file)) {
-                static::$head = $filesystem->get($current_version_file);
-                static::$version_number = (int) $filesystem->get($version_dir . '/' . static::$head);
+                $this->head = $this->filesystem->get($current_version_file);
+                $this->version_number = (int) $this->filesystem->get($version_dir . '/' . $this->head);
             } else {
-                static::$head = hash('sha256', 'jars'); // version 0
-                static::$version_number = 0;
+                $this->head = hash('sha256', 'jars'); // version 0
+                $this->version_number = 0;
             }
         }
 
@@ -342,35 +330,31 @@ class Jars implements Client
         $master_export = $timestamp . ' ' . json_encode(array_values($data));
         $meta_export = implode(' ', $meta);
 
-        static::$head = hash('sha256', static::$head . $master_export);
-        static::$version_number++;
+        $this->head = hash('sha256', $this->head . $master_export);
+        $this->version_number++;
 
-        $filesystem->donefile($db_home . '/touch.dat');
-        $filesystem->put($current_version_file, static::$head);
-        $filesystem->put($version_dir . '/' . static::$head, static::$version_number);
-        $filesystem->append($master_meta_file, static::$head . ' ' . $meta_export . "\n");
-        $filesystem->append($master_record_file, static::$head . ' ' . $master_export . "\n");
+        $this->filesystem->donefile($this->db_home . '/touch.dat');
+        $this->filesystem->put($current_version_file, $this->head);
+        $this->filesystem->put($version_dir . '/' . $this->head, $this->version_number);
+        $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
+        $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
 
         // Db::succeed('update master_record_lock set counter = counter + 1');
     }
 
-    private function head($filesystem)
+    private function head()
     {
-        if (!$db_home = @Config::get()->db_home) {
-            error_response('db_home not defined', 500);
-        }
-
-        $master_record_file = $db_home . '/master.dat';
-        $master_record = $filesystem->get($master_record_file);
+        $master_record_file = $this->db_home . '/master.dat';
+        $master_record = $this->filesystem->get($master_record_file);
         $head = substr($master_record, strrpos($master_record, "\n") ?: 0, 64);
     }
 
     public function h2n($h)
     {
-        $sequence = BlendsConfig::get()->sequence;
+        $sequence = $this->config()->sequence;
 
         for ($n = 1; $n <= $sequence->max; $n++) {
-            if (n2h($n) == $h) {
+            if ($this->n2h($n) == $h) {
                 return $n;
             }
         }
@@ -379,7 +363,7 @@ class Jars implements Client
     public function n2h($n)
     {
         // Generate a sequence secret: php -r 'echo base64_encode(random_bytes(32)) . "\n";'
-        $sequence = BlendsConfig::get()->sequence;
+        $sequence = $this->config()->sequence;
 
         $banned = @$sequence->banned_chars ?? [];
         $replace = array_fill(0, count($banned), '');
@@ -403,11 +387,7 @@ class Jars implements Client
 
     public function masterlog_check()
     {
-        if (!$db_home = @Config::get()->db_home) {
-            error_response('db_home not defined', 500);
-        }
-
-        $master_record_file = $db_home . '/master.dat';
+        $master_record_file = $this->db_home . '/master.dat';
         $master_meta_file = $master_record_file . '.meta';
 
         if (!touch($master_record_file) || !is_writable($master_record_file)) {
@@ -417,5 +397,193 @@ class Jars implements Client
         if (!touch($master_meta_file) || !is_writable($master_meta_file)) {
             error_response('Master meta file not writable');
         }
+    }
+
+    public function delete($linetype, $id)
+    {
+        return $this->linetype($linetype)->delete($id);
+    }
+
+    public function fields($linetype) {}
+
+    public function get($linetype, $id)
+    {
+        $line = $this->linetype($linetype)->get($this->token, $id);
+
+        if (!$line) {
+            return null;
+        }
+
+        return $line;
+    }
+
+    public function preview(array $data) {}
+    public function record($table, $id) {}
+
+    public function group(string $report, string $group, ?string $min_version = null)
+    {
+        return $this->report($report)->get($group, $min_version);
+    }
+
+    public function groups(string $report, ?string $min_version = null)
+    {
+        return $this->report($report)->groups($min_version);
+    }
+
+    public function touch() {}
+    public function unlink($linetype, $id, $parent) {}
+
+    public function version()
+    {
+        return $this->head;
+    }
+
+    public function config(string $token = null)
+    {
+        if (isset($this->known_configs[$this->portal_home . '--' . $token])) {
+            return $this->known_configs[$this->portal_home . '--' . $token];
+        }
+
+        $entrypoint = 'base';
+
+        if ($token && $this->verify_token($token)) {
+            $entrypoint = 'public';
+            $base_config = require $this->portal_home . '/entrypoints/base.php';
+
+            if (($root_username = $base_config->root_username) && $this->token_username($token) == $root_username) {
+                $entrypoint = 'root';
+            }
+        }
+
+        $config = require $this->portal_home . '/entrypoints/' . $entrypoint . '.php';
+
+        foreach (['linetypes', 'tables', 'reports'] as $listname) {
+            if (!property_exists($config, $listname)) {
+                $config->{$listname} = [];
+            }
+        }
+
+        if (!in_array('token', array_keys($config->linetypes))) {
+            $config->linetypes['token'] = (object) [
+                'cancreate' => true,
+                'canwrite' => true,
+                'candelete' => true,
+                'class' => 'jars\\linetype\\token',
+            ];
+        }
+
+        $this->known_configs[$this->portal_home . '--' . $token] = $config;
+
+        return $config;
+    }
+
+    public function linetype(string $name, bool $from_base_config = false)
+    {
+        if (!isset($this->known_linetypes[$name])) {
+            $linetypeclass = $this->config($from_base_config ? null : $this->token)->linetypes[$name]->class;
+
+            if (!$linetypeclass) {
+                error_response("No such linetype '{$name}'");
+            }
+
+            $linetype = new $linetypeclass();
+            $linetype->name = $name;
+
+            $linetype->jars($this);
+            $linetype->filesystem($this->filesystem());
+
+            if (method_exists($linetype, 'init')) {
+                $linetype->init($token);
+            }
+
+            $this->known_linetypes[$name] = $linetype;
+        }
+
+        return $this->known_linetypes[$name];
+    }
+
+    public function report(string $name)
+    {
+        if (!isset($this->known_reports[$name])) {
+            $reportclass = @$this->config($this->token)->reports[$name];
+
+            if (!$reportclass) {
+                error_response("No such report '{$name}'");
+            }
+
+            $report = new $reportclass();
+            $report->name = $name;
+
+            $report->jars($this);
+            $report->filesystem($this->filesystem());
+
+            if (method_exists($report, 'init')) {
+                $report->init($token);
+            }
+
+            $this->known_reports[$name] = $report;
+        }
+
+        return $this->known_reports[$name];
+    }
+
+    public function takeanumber()
+    {
+        $pointer_file = $this->db_home . '/pointer.dat';
+        $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
+        $this->filesystem->put($pointer_file, $pointer + 1);
+
+        return $id;
+    }
+
+    public function filesystem()
+    {
+        if (func_num_args()) {
+            $filesystem = func_get_arg(0);
+
+            if (!($filesystem instanceof Filesystem)) {
+                error_response(__METHOD__ . ': argument should be instance of Filesystem');
+            }
+
+            $prev = $this->filesystem;
+            $this->filesystem = $filesystem;
+
+            return $prev;
+        }
+
+        return $this->filesystem;
+    }
+
+    public function token()
+    {
+        if (func_num_args()) {
+            $token = func_get_arg(0);
+
+            if (!is_string($token)) {
+                error_response(__METHOD__ . ': argument should be a string');
+            }
+
+            $prev = $this->token;
+            $this->token = $token;
+
+            return $prev;
+        }
+
+        return $this->token;
+    }
+
+    public function db_path($path = null)
+    {
+        return $this->db_home . ($path ? '/' . $path : null);
+    }
+
+    public static function of(string $portal_home, string $db_home)
+    {
+        return new Jars($portal_home, $db_home);
+    }
+
+    public function get_childset(string $linetype, string $id, string $property)
+    {
+        return $this->linetype($linetype)->get_childset($this->token, $id, $property);
     }
 }

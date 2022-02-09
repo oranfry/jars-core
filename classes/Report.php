@@ -6,8 +6,8 @@ abstract class Report
 {
     const DEFAULT = [];
 
-    private static $known = [];
     protected $filesystem;
+    protected $jars;
 
     public $listen = [];
 
@@ -33,7 +33,7 @@ abstract class Report
 
     private function file($group)
     {
-        return Config::get()->db_home . "/reports/{$this->name}/{$group}.json";
+        return $this->jars->db_path("reports/{$this->name}/{$group}.json");
     }
 
     public function filesystem()
@@ -86,25 +86,6 @@ abstract class Report
         }
 
         return $linetypes;
-    }
-
-    public static function load($token, Filesystem $filesystem, $name)
-    {
-        if (!isset(static::$known[$name]) || static::$known[$name]->filesystem() !== $filesystem) {
-            $reportclass = @BlendsConfig::get($token, $filesystem)->reports[$name];
-
-            if (!$reportclass) {
-                error_response("No such report '{$name}'");
-            }
-
-            $report = new $reportclass();
-            $report->filesystem($filesystem);
-            $report->name = $name;
-
-            static::$known[$name] = $report;
-        }
-
-        return static::$known[$name];
     }
 
     public function manip($group, $callback)
@@ -162,19 +143,15 @@ abstract class Report
 
     private function version_requirement_met(string $min_version, int $micro_delay = 0)
     {
-        if (!$db_home = @Config::get()->db_home) {
-            error_response('db_home not defined', 500);
-        }
-
-        $min_version_file = $db_home . '/versions/' . $min_version;
+        $min_version_file = $this->jars->db_path('versions/' . $min_version);
 
         if (!file_exists($min_version_file)) {
             error_response('No such version');
         }
 
-        $current_version = file_get_contents($db_home . "/reports/version.dat");
+        $current_version = file_get_contents($this->jars->db_path("reports/version.dat"));
         $min_version_num = (int) file_get_contents($min_version_file);
-        $current_version_number = (int) file_get_contents($db_home . '/versions/' . $current_version);
+        $current_version_number = (int) file_get_contents($this->jars->db_path('versions/' . $current_version));
 
         if ($current_version_number >= $min_version_num) {
             return true;
@@ -193,12 +170,45 @@ abstract class Report
             error_response('Invalid minimum version');
         }
 
-        $tries = 10;
+        $tries = [
+            10000,
+            100000,
+            100000,
+            100000,
+            100000,
+            100000,
+            1000000,
+            2000000,
+            2000000,
+            5000000,
+        ];
 
-        while (!$this->version_requirement_met($min_version, 1000000) && --$tries);
+        foreach ($tries as $try) {
+            if ($met = $this->version_requirement_met($min_version, $try)) {
+                break;
+            }
+        }
 
-        if (!$tries) {
+        if (!$met) {
             error_response('Version Timeout');
         }
+    }
+
+    public function jars()
+    {
+        if (func_num_args()) {
+            $jars = func_get_arg(0);
+
+            if (!($jars instanceof Jars)) {
+                error_response(__METHOD__ . ': argument should be instance of Jars');
+            }
+
+            $prev = $this->jars;
+            $this->jars = $jars;
+
+            return $prev;
+        }
+
+        return $this->jars;
     }
 }

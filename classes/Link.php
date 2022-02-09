@@ -6,14 +6,14 @@ class Link
 {
     private $data = null;
     private $dirty = false;
-    private $filesystem;
     private $id;
+    private $jars;
     private $name;
     private $version;
 
-    public function __construct(Filesystem $filesystem, string $name, string $id, ?bool $reverse = null, ?string $version = null)
+    public function __construct(Jars $jars, string $name, string $id, ?bool $reverse = null, ?string $version = null)
     {
-        $this->filesystem = $filesystem;
+        $this->jars = $jars;
         $this->name = $name;
         $this->id = $id;
         $this->reverse = (bool) $reverse;
@@ -51,14 +51,14 @@ class Link
     {
         $version_path = $this->version ? 'past/' . $this->version : 'current';
 
-        return Config::get()->db_home . '/' . $version_path . '/links/' . $this->name . '/' . $this->direction() . '/' . $this->id . '.json';
+        return $this->jars->db_path($version_path . '/links/' . $this->name . '/' . $this->direction() . '/' . $this->id . '.json');
     }
 
     private function load()
     {
         $file = $this->file();
 
-        $this->data = json_decode($this->filesystem->get($file) ?? '[]', true);
+        $this->data = json_decode($this->jars->filesystem()->get($file) ?? '[]', true);
     }
 
     public function add($linked_id)
@@ -98,7 +98,7 @@ class Link
             return;
         }
 
-        $this->filesystem->put($this->file(), count($this->data) ? json_encode($this->data) : null);
+        $this->jars->filesystem()->put($this->file(), count($this->data) ? json_encode($this->data) : null);
     }
 
     public function name()
@@ -106,8 +106,8 @@ class Link
         return $this->name;
     }
 
-    public static function of(Filesystem $filesystem, string $name, string $id, ?bool $reverse = null, ?string $version = null)
+    public static function of(Jars $jars, string $name, string $id, ?bool $reverse = null, ?string $version = null)
     {
-        return new static($filesystem, $name, $id, $reverse, $version);
+        return new static($jars, $name, $id, $reverse, $version);
     }
 }

@@ -2,6 +2,8 @@
 
 namespace jars;
 
+use ReflectionFunction;
+
 class Linetype
 {
     public $borrow = [];
@@ -13,8 +15,11 @@ class Linetype
     public $unfuse_fields = [];
     public $validations = [];
 
-    private static $incoming_links = [];
+    private $jars;
+    private $filesystem;
+
     private static $incoming_inlines = null;
+    private static $incoming_links = [];
     private static $known = [];
 
     public function __construct()
@@ -22,35 +27,30 @@ class Linetype
         // Just allow subclasses to call parent constructor
     }
 
-    private function _delete($token, Filesystem $filesystem, $id)
-    {
-        $this->save($token, $filesystem, [(object)['id' => $id, '_is' => false]]);
-    }
-
-    private function _unlink($token, Filesystem $filesystem, $line, $tablelink)
+    private function _unlink($token, $line, $tablelink)
     {
         $changed = [];
 
-        foreach ($this->find_incoming_links($token, $filesystem) as $incoming) {
+        foreach ($this->find_incoming_links() as $incoming) {
             if ($incoming->tablelink != $tablelink) {
                 continue;
             }
 
-            $link = new Link($filesystem, $incoming->tablelink, $line->id, !@$incoming->reverse);
+            $link = Link::of($this->jars, $incoming->tablelink, $line->id, !@$incoming->reverse);
 
             foreach ($link->relatives() as $parent_id) {
-                $parent = static::load($token, $filesystem, $incoming->parent_linetype)->get($token, $filesystem, $parent_id);
+                $parent = $this->jars->linetype($incoming->parent_linetype)->get($token, $parent_id);
                 $parent->_disown = (object) [$link->property => $line->id];
                 $changed[] = $parent;
             }
 
-            return $this->save($token, $filesystem, $changed);
+            return $this->save($changed);
         }
 
         error_response('No such tablelink');
     }
 
-    private function borrow_r($token, Filesystem $filesystem, $line, $ignorelink = null)
+    private function borrow_r($token, $line, $ignorelink = null)
     {
         // recurse to inline children
 
@@ -64,7 +64,7 @@ class Linetype
             }
 
             if (property_exists($line, $child->property)) {
-                static::load($token, $filesystem, $child->linetype)->borrow_r($token, $filesystem, $line->{$child->property}, $child->tablelink);
+                $this->jars->linetype($child->linetype)->borrow_r($token, $line->{$child->property}, $child->tablelink);
             }
         }
 
@@ -73,7 +73,7 @@ class Linetype
         }
     }
 
-    public function clone_r($token, Filesystem $filesystem, $line, $ignorelinks = [])
+    public function clone_r($token, $line, $ignorelinks = [])
     {
         $clone = clone $line;
 
@@ -93,7 +93,7 @@ class Linetype
             }
 
             foreach ($line->{$child->property} as $i => $childline) {
-                $line->{$child->property}[$i] = static::load($token, $filesystem, $child->linetype)->clone_r($token, $filesystem, $childline, $child_ignorelinks);
+                $line->{$child->property}[$i] = $this->jars->linetype($child->linetype)->clone_r($token, $childline, $child_ignorelinks);
             }
         }
 
@@ -105,7 +105,7 @@ class Linetype
             $childline = @$line->{$child->property};
 
             if ($childline) {
-                $line->{$child->property} = static::load($token, $filesystem, $child->linetype)->clone_r($token, $filesystem, $childline);
+                $line->{$child->property} = $this->jars->linetype($child->linetype)->clone_r($token, $childline);
             }
         }
 
@@ -119,41 +119,40 @@ class Linetype
         }
     }
 
-    public function delete($token, Filesystem $filesystem, $id)
+    public function delete($id)
     {
-        if (!Blends::verify_token($token, $filesystem)) {
-            return false;
-        }
-
-        $this->_delete($token, $filesystem, $id);
+        $this->save([(object) [
+            'id' => $id,
+            '_is' => false,
+        ]]);
     }
 
-    public final function find_incoming_links(?string $token, Filesystem $filesystem)
+    public final function find_incoming_links()
     {
-        if (!isset(self::$incoming_links[$token])) {
-            self::$incoming_links[$token] = [];
+        if (!isset(self::$incoming_links[$this->jars->token()])) {
+            self::$incoming_links[$this->jars->token()] = [];
 
-            foreach (BlendsConfig::get($token, $filesystem)->linetypes as $name => $class) {
-                $linetype = static::load($token, $filesystem, $name);
+            foreach ($this->jars->config($this->jars->token())->linetypes as $name => $class) {
+                $linetype = $this->jars->linetype($name);
 
                 foreach ($linetype->children as $child) {
                     $link = clone $child;
                     $link->parent_linetype = $name;
-                    self::$incoming_links[$token][$child->linetype][] = $link;
+                    self::$incoming_links[$this->jars->token()][$child->linetype][] = $link;
                 }
             }
         }
 
-        return @self::$incoming_links[$token][$this->name] ?? [];
+        return @self::$incoming_links[$this->jars->token()][$this->name] ?? [];
     }
 
-    public final function find_incoming_inlines($token, Filesystem $filesystem)
+    public final function find_incoming_inlines()
     {
         if (self::$incoming_inlines === null) {
             self::$incoming_inlines = [];
 
-            foreach (BlendsConfig::get($token, $filesystem)->linetypes as $name => $class) {
-                $linetype = static::load($token, $filesystem, $name);
+            foreach ($this->jars->config($token)->linetypes as $name => $class) {
+                $linetype = $this->jars->linetype($name);
 
                 foreach ($linetype->inlinelinks as $child) {
                     $link = clone $child;
@@ -171,11 +170,11 @@ class Linetype
         return @self::$incoming_inlines[$this->name] ?: [];
     }
 
-    public function get(?string $token, Filesystem $filesystem, string $id, &$inlines = [])
+    public function get(?string $token, string $id, &$inlines = [])
     {
         $collected = [];
 
-        $this->load_r($token, $filesystem, $id, $collected);
+        $this->load_r($token, $id, $collected);
 
         $line = (object) array_map(function($callback) use ($collected) {
             return $callback($collected);
@@ -184,23 +183,23 @@ class Linetype
         $line->id = $id;
         $line->type = $this->name;
 
-        $this->pack_r($token, $filesystem, $collected, $line);
-        $this->borrow_r($token, $filesystem, $line);
+        $this->pack_r($token, $collected, $line);
+        $this->borrow_r($token, $line);
         $inlines = $this->strip_inline_children($line);
 
-        foreach ($this->find_incoming_links($token, $filesystem) as $parent) {
+        foreach ($this->find_incoming_links() as $parent) {
             if (!$alias = @$parent->only_parent) {
                 continue;
             }
 
             $line->$alias = null;
-            $link = new Link($filesystem, $parent->tablelink, $id, !@$parent->reverse);
+            $link = Link::of($this->jars, $parent->tablelink, $id, !@$parent->reverse);
 
             if (!$parent_id = $link->firstChild()) {
                 continue;
             }
 
-            if (!Record::of($filesystem, static::load($token, $filesystem, $parent->parent_linetype)->table, $parent_id)->exists()) {
+            if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
                 error_response('Parent does not exist');
             }
 
@@ -210,16 +209,16 @@ class Linetype
         return $line;
     }
 
-    public function import($token, Filesystem $filesystem, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
+    public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
     {
-        $tableinfo = @BlendsConfig::get()->tables[$this->table];
+        $tableinfo = @$this->jars->config()->tables[$this->table] ?? (object) [];
         $oldline = null;
         $oldrecord = null;
         $old_inlines = [];
 
         if (@$line->id) {
             $line->given_id = $line->id;
-            $oldrecord = Record::of($filesystem, $this->table, $line->id);
+            $oldrecord = Record::of($this->jars, $this->table, $line->id);
         }
 
         if (property_exists($line, '_is') && !$line->_is) { // Remove
@@ -230,8 +229,8 @@ class Linetype
             $is = false;
             $oldrecord->assertExistence();
 
-            foreach ($this->find_incoming_links($token, $filesystem) as $parent) {
-                $link = new Link($filesystem, $parent->tablelink, $line->id, !@$parent->reverse);
+            foreach ($this->find_incoming_links() as $parent) {
+                $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
 
                 foreach ($link->relatives() as $parent_id) {
                     $affecteds[] = (object) [
@@ -244,7 +243,7 @@ class Linetype
             }
 
             foreach ($this->children as $child) {
-                $link = new Link($filesystem, $child->tablelink, $line->id, @$child->reverse);
+                $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
 
                 foreach ($link->relatives() as $child_id) {
                     $affecteds[] = (object) [
@@ -268,7 +267,10 @@ class Linetype
             $is = true;
 
             if (@$line->id) {
-                $oldline = $this->get($token, $original_filesystem, $line->id, $old_inlines);
+                $original_jars = clone $this;
+                $original_jars->filesystem($original_filesystem);
+
+                $oldline = $original_jars->get($token, $line->id, $old_inlines);
 
                 foreach (array_diff(array_keys(get_object_vars($oldline)), ['id', 'type']) as $property) {
                     if (!property_exists($line, $property)) {
@@ -285,16 +287,10 @@ class Linetype
             }
 
             if (!@$line->id) { // Add
-                if (!$db_home = @Config::get()->db_home) {
-                    error_response('db_home not defined', 500);
-                }
-
-                $pointer_file = $db_home . '/pointer.dat';
-                $line->id = n2h($pointer = $filesystem->get($pointer_file) ?? 1);
-                $filesystem->put($pointer_file, $pointer + 1);
+                $line->id = $this->jars->takeanumber();
             }
 
-            $record = $oldrecord ? (clone $oldrecord) : Record::of($filesystem, $this->table);
+            $record = $oldrecord ? (clone $oldrecord) : Record::of($this->jars, $this->table);
 
             if ($oldline === null) {
                 $record->created = $timestamp;
@@ -320,12 +316,12 @@ class Linetype
 
         // incoming links
 
-        foreach ($this->find_incoming_links($token, $filesystem) as $parent) {
+        foreach ($this->find_incoming_links() as $parent) {
             if (!$alias = @$parent->only_parent) {
                 continue;
             }
 
-            $parent_table = static::load($token, $filesystem, $parent->parent_linetype)->table;
+            $parent_table = $this->jars->linetype($parent->parent_linetype)->table;
 
             if (@$line->$alias != @$oldline->$alias) {
                 if (@$oldline->$alias) {
@@ -335,8 +331,8 @@ class Linetype
                         'right' => (@$parent->reverse ? $oldline->$alias : $line->id),
                         'tablelink' => $parent->tablelink,
                         'table' => $parent_table,
-                        'record' => Record::of($filesystem, $parent_table, $line->$alias),
-                        'oldrecord' => Record::of($filesystem, $parent_table, $line->$alias),
+                        'record' => Record::of($this->jars, $parent_table, $line->$alias),
+                        'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
                         'oldlinks' => [],
                     ];
                 }
@@ -352,8 +348,8 @@ class Linetype
                         'right' => (@$parent->reverse ? $line->$alias : $line->id),
                         'tablelink' => $parent->tablelink,
                         'table' => $parent_table,
-                        'record' => Record::of($filesystem, $parent_table, $line->$alias),
-                        'oldrecord' => Record::of($filesystem, $parent_table, $line->$alias),
+                        'record' => Record::of($this->jars, $parent_table, $line->$alias),
+                        'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
                         'oldlinks' => [],
                     ];
                 }
@@ -378,12 +374,12 @@ class Linetype
                 error_response('Inlinelink without property');
             }
 
-            $child_linetype = static::load($token, $filesystem, $child->linetype);
+            $child_linetype = $this->jars->linetype($child->linetype);
             $oldchild = null;
-            $link = new Link($filesystem, $child->tablelink, $line->id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
 
             if ($oldchild_id = $link->firstChild()) {
-                $oldchild = Record::of($filesystem, $child_linetype->table, $oldchild_id);
+                $oldchild = Record::of($this->jars, $child_linetype->table, $oldchild_id);
                 $oldchild->assertExistence();
             }
 
@@ -404,7 +400,7 @@ class Linetype
                     }
 
                     $discard = [];
-                    $childlines = Blends::import_r($token, $filesystem, $original_filesystem, $timestamp, [$childline], $affecteds, $discard, $child->tablelink, $logging !== null ? $logging + 1 : null);
+                    $childlines = $this->jars->import_r($original_filesystem, $timestamp, [$childline], $affecteds, $discard, $child->tablelink, $logging !== null ? $logging + 1 : null);
                     $affecteds[] = (object) [
                         'action' => 'connect',
                         'tablelink' => $child->tablelink,
@@ -453,8 +449,8 @@ class Linetype
             }
         }
 
-        $commit = $this->clone_r($token, $filesystem, $line);
-        $this->scrub($token, $filesystem, $commit);
+        $commit = $this->clone_r($token, $line);
+        $this->scrub($token, $commit);
         $commit->type = $this->name;
 
         if ($oldline !== null) {
@@ -468,12 +464,12 @@ class Linetype
         $commits[$line->id] = $commit;
     }
 
-    public function recurse_to_children($token, Filesystem $filesystem, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
+    public function recurse_to_children($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
     {
         // recurse to normal children
 
         foreach ($this->children as $child) {
-            $child_linetype = static::load($token, $filesystem, $child->linetype);
+            $child_linetype = $this->jars->linetype($child->linetype);
 
             if ($alias = @$child->only_parent) {
                 if ($childlines = @$line->{$child->property}) {
@@ -487,14 +483,13 @@ class Linetype
                         }
                     }
 
-                    $childlines = Blends::import_r(
-                        $token,
-                        $filesystem,
+                    $childlines = $this->jars->import_r(
                         $original_filesystem,
                         $timestamp,
                         $childlines,
                         $affecteds,
                         $childcommits,
+                        null,
                         $logging !== null ? $logging + 1 : null
                     );
 
@@ -516,7 +511,7 @@ class Linetype
 
             if (is_array(@$line->_adopt->{$child->property})) {
                 foreach ($line->_adopt->{$child->property} as $child_id) {
-                    $child_record = Record::of($filesystem, $child_linetype->table, $child_id);
+                    $child_record = Record::of($this->jars, $child_linetype->table, $child_id);
                     $child_record->assertExistence();
 
                     $affecteds[] = (object) [
@@ -534,7 +529,7 @@ class Linetype
 
             if (is_array(@$line->_disown->{$child->property})) {
                 foreach ($line->_disown->{$child->property} as $child_id) {
-                    $child_record = Record::of($filesystem, $child_linetype->table, $child_id);
+                    $child_record = Record::of($this->jars, $child_linetype->table, $child_id);
                     $child_record->assertExistence();
 
                     $affecteds[] = (object) [
@@ -552,31 +547,9 @@ class Linetype
         }
     }
 
-    public static function load(?string $token, Filesystem $filesystem, string $name)
+    protected function load_r($token, $id, &$collected, $path = '/', $ignorelink = null)
     {
-        if (!isset(static::$known[$name])) {
-            $linetypeclass = @BlendsConfig::get($token, $filesystem)->linetypes[$name]->class;
-
-            if (!$linetypeclass) {
-                error_response("No such linetype '{$name}'");
-            }
-
-            $linetype = new $linetypeclass();
-            $linetype->name = $name;
-
-            if (method_exists($linetype, 'init')) {
-                $linetype->init($token);
-            }
-
-            static::$known[$name] = $linetype;
-        }
-
-        return static::$known[$name];
-    }
-
-    protected function load_r($token, Filesystem $filesystem, $id, &$collected, $path = '/', $ignorelink = null)
-    {
-        $record = Record::of($filesystem, $this->table, $id);
+        $record = Record::of($this->jars, $this->table, $id);
         $record->assertExistence();
 
         $collected[$path] = $record;
@@ -593,19 +566,19 @@ class Linetype
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $link = new Link($filesystem, $child->tablelink, $id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
 
             if ($child_ids = $link->relatives()) {
-                $childlinetype = static::load($token, $filesystem, $child->linetype);
+                $childlinetype = $this->jars->linetype($child->linetype);
 
                 foreach ($child_ids as $child_id) {
-                    $childlinetype->load_r($token, $filesystem, $child_id, $collected, $childpath, $child->tablelink);
+                    $childlinetype->load_r($token, $child_id, $collected, $childpath, $child->tablelink);
                 }
             }
         }
     }
 
-    public function load_children(string $token, Filesystem $filesystem, object $line, int $recursive = INF, array $ignorelinks = [])
+    public function load_children(string $token, object $line, int $recursive = INF, array $ignorelinks = [])
     {
         foreach ($this->children as $child) {
             if (in_array($child->tablelink, $ignorelinks)) {
@@ -613,17 +586,17 @@ class Linetype
             }
 
             $child_ignorelinks = array_merge($ignorelinks, [$child->tablelink]);
-            $line->{$child->property} = $this->get_childset($token, $filesystem, $line, $child->property);
+            $line->{$child->property} = $this->get_childset($token, $line, $child->property);
 
             if ($recursive > 0) {
                 foreach ($childset as $childline) {
-                    $childlinetype->load_children($token, $filesystem, $childline, $recursive - 1, $child_ignorelinks);
+                    $childlinetype->load_children($token, $childline, $recursive - 1, $child_ignorelinks);
                 }
             }
         }
     }
 
-    public function get_childset($token, Filesystem $filesystem, string $id, string $property)
+    public function get_childset($token, string $id, string $property)
     {
         $child = find_object($this->children, 'property', 'is', $property);
 
@@ -632,20 +605,20 @@ class Linetype
         }
 
         $childset = [];
-        $link = new Link($filesystem, $child->tablelink, $id, @$child->reverse);
+        $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
 
         if ($child_ids = $link->relatives()) {
-            $childlinetype = static::load($token, $filesystem, $child->linetype);
+            $childlinetype = $this->jars->linetype($child->linetype);
 
             foreach ($child_ids as $child_id) {
-                $childset[] = $childlinetype->get($token, $filesystem, $child_id);
+                $childset[] = $childlinetype->get($token, $child_id);
             }
         }
 
         return $childset;
     }
 
-    private function pack_r($token, Filesystem $filesystem, $records, $line, $path = '/', $ignorelink = null)
+    private function pack_r($token, $records, $line, $path = '/', $ignorelink = null)
     {
         foreach (@$this->inlinelinks ?? [] as $child) {
             if ($child->tablelink == $ignorelink) {
@@ -657,7 +630,7 @@ class Linetype
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $childlinetype = static::load($token, $filesystem, $child->linetype);
+            $childlinetype = $this->jars->linetype($child->linetype);
             $childrecords = static::records_subset($records, $childpath);
 
             if ($childrecords) {
@@ -667,17 +640,13 @@ class Linetype
 
                 $line->{$child->property}->id = $childrecords['/']->id;
 
-                $childlinetype->pack_r($token, $filesystem, $records, $line->{$child->property}, $childpath, $child->tablelink);
+                $childlinetype->pack_r($token, $records, $line->{$child->property}, $childpath, $child->tablelink);
             }
         }
     }
 
-    public function save($token, Filesystem $filesystem, $lines)
+    public function save($lines)
     {
-        if (!Blends::verify_token($token, $filesystem)) {
-            return false;
-        }
-
         foreach ($lines as $line) {
             if (!@$line->type) {
                 $line->type = $this->name;
@@ -686,7 +655,7 @@ class Linetype
             }
         }
 
-        return Blends::import($token, $filesystem, date('Y-m-d H:i:s'), $lines);
+        return $this->jars->import(date('Y-m-d H:i:s'), $lines);
     }
 
     public function strip_children($line)
@@ -715,7 +684,7 @@ class Linetype
         return $stripped;
     }
 
-    public function scrub($token, $filesystem, $line)
+    public function scrub($token, $line)
     {
         if (@$line->given_id) {
             $line->id = $line->given_id;
@@ -749,7 +718,7 @@ class Linetype
             ['_is', 'id'],
             array_keys($this->fields),
             array_keys($this->borrow),
-            array_filter(array_map(fn($l) => @$l->only_parent, $this->find_incoming_links($token, $filesystem)))
+            array_filter(array_map(fn($l) => @$l->only_parent, $this->find_incoming_links()))
         );
 
         foreach (array_keys(get_object_vars($line)) as $var) {
@@ -759,9 +728,9 @@ class Linetype
         }
     }
 
-    public function unlink($token, Filesystem $filesystem, $line, $from)
+    public function unlink($token, $line, $from)
     {
-        if (!Blends::verify_token($token, $filesystem)) {
+        if (!$this->jars->verify_token($token)) {
             return false;
         }
 
@@ -1033,5 +1002,41 @@ class Linetype
         }
 
         return $subset;
+    }
+
+    public function jars()
+    {
+        if (func_num_args()) {
+            $jars = func_get_arg(0);
+
+            if (!($jars instanceof Jars)) {
+                error_response(__METHOD__ . ': argument should be instance of Jars');
+            }
+
+            $prev = $this->jars;
+            $this->jars = $jars;
+
+            return $prev;
+        }
+
+        return $this->jars;
+    }
+
+    public function filesystem()
+    {
+        if (func_num_args()) {
+            $filesystem = func_get_arg(0);
+
+            if (!($filesystem instanceof Filesystem)) {
+                error_response(__METHOD__ . ': argument should be instance of Filesystem');
+            }
+
+            $prev = $this->filesystem;
+            $this->filesystem = $filesystem;
+
+            return $prev;
+        }
+
+        return $this->filesystem;
     }
 }
