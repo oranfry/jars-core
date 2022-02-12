@@ -418,7 +418,17 @@ class Jars implements contract\Client
     }
 
     public function preview(array $data) {}
-    public function record($table, $id) {}
+
+    public function record($table, $id)
+    {
+        $ext = @$this->config($this->token)->tables[$table]->extension ?? 'json';
+
+        if (!is_file($file = $this->db_path('current/records/' . $table . '/' . $id . ($ext ? '.' . $ext : null)))) {
+            return null;
+        }
+
+        return file_get_contents($file);
+    }
 
     public function group(string $report, string $group, ?string $min_version = null)
     {
