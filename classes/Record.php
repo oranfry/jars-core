@@ -17,7 +17,7 @@ class Record
     {
         $this->jars = $jars;
 
-        if ($tableinfo = @$this->jars->config()->tables[$table]) {
+        if ($tableinfo = @$this->jars->config(true)->tables[$table]) {
             $this->format = @$tableinfo->format;
             $this->extension = @$tableinfo->extension;
         }

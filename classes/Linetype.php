@@ -132,7 +132,7 @@ class Linetype
         if (!isset(self::$incoming_links[$this->jars->token()])) {
             self::$incoming_links[$this->jars->token()] = [];
 
-            foreach ($this->jars->config($this->jars->token())->linetypes as $name => $class) {
+            foreach ($this->jars->config()->linetypes as $name => $class) {
                 $linetype = $this->jars->linetype($name);
 
                 foreach ($linetype->children as $child) {
@@ -151,7 +151,7 @@ class Linetype
         if (self::$incoming_inlines === null) {
             self::$incoming_inlines = [];
 
-            foreach ($this->jars->config($token)->linetypes as $name => $class) {
+            foreach ($this->jars->config()->linetypes as $name => $class) {
                 $linetype = $this->jars->linetype($name);
 
                 foreach ($linetype->inlinelinks as $child) {
@@ -211,7 +211,7 @@ class Linetype
 
     public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
     {
-        $tableinfo = @$this->jars->config()->tables[$this->table] ?? (object) [];
+        $tableinfo = @$this->jars->config(true)->tables[$this->table] ?? (object) [];
         $oldline = null;
         $oldrecord = null;
         $old_inlines = [];
