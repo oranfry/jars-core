@@ -2,6 +2,8 @@
 
 namespace jars;
 
+use Exception;
+
 class Filesystem
 {
     public const NO_PERSIST = 1 << 0;
@@ -44,7 +46,7 @@ class Filesystem
             $donefile = func_get_arg(0);
 
             if (!is_string($donefile)) {
-                error_response(__METHOD__ . ': argument should be a string');
+                throw new Exception(__METHOD__ . ': argument should be a string');
             }
 
             $prev = $this->donefile;
@@ -59,7 +61,7 @@ class Filesystem
     public function put(string $file, $content)
     {
         if ($this->read_only) {
-            error_response('Attempt made to modify to read-only filesystem');
+            throw new Exception('Attempt made to modify to read-only filesystem');
         }
 
         $this->store[$file] = (object) [
@@ -80,7 +82,7 @@ class Filesystem
     public function delete(string $file)
     {
         if ($this->read_only) {
-            error_response('Attempt made to modify to read-only filesystem');
+            throw new Exception('Attempt made to modify to read-only filesystem');
         }
 
         $this->store[$file] = (object) [
@@ -106,7 +108,7 @@ class Filesystem
     public function persist() : object
     {
         if ($this->no_persist) {
-            error_response('Attempt made to persist to no-persist filesystem');
+            throw new Exception('Attempt made to persist to no-persist filesystem');
         }
 
         $did_something = false;
@@ -160,7 +162,7 @@ class Filesystem
     public function append(string $file, $content)
     {
         if ($this->read_only) {
-            error_response('Attempt made to modify to read-only filesystem');
+            throw new Exception('Attempt made to modify to read-only filesystem');
         }
 
         if (!isset($this->store[$file])) {

@@ -2,6 +2,8 @@
 
 namespace jars;
 
+use Exception;
+
 abstract class Report
 {
     const DEFAULT = [];
@@ -42,7 +44,7 @@ abstract class Report
             $filesystem = func_get_arg(0);
 
             if (!($filesystem instanceof Filesystem)) {
-                error_response(__METHOD__ . ': argument should be instance of Filesystem');
+                throw new Exception(__METHOD__ . ': argument should be instance of Filesystem');
             }
 
             $prev = $this->filesystem;
@@ -146,7 +148,7 @@ abstract class Report
         $min_version_file = $this->jars->db_path('versions/' . $min_version);
 
         if (!file_exists($min_version_file)) {
-            error_response('No such version');
+            throw new Exception('No such version');
         }
 
         $current_version = file_get_contents($this->jars->db_path("reports/version.dat"));
@@ -167,7 +169,7 @@ abstract class Report
     private function wait_for_version(string $min_version)
     {
         if (!preg_match('/^[a-f0-9]{64}$/', $min_version)) {
-            error_response('Invalid minimum version');
+            throw new Exception('Invalid minimum version [' . $min_version . ']');
         }
 
         $tries = [
@@ -190,7 +192,7 @@ abstract class Report
         }
 
         if (!$met) {
-            error_response('Version Timeout');
+            throw new Exception('Version Timeout');
         }
     }
 
@@ -200,7 +202,7 @@ abstract class Report
             $jars = func_get_arg(0);
 
             if (!($jars instanceof Jars)) {
-                error_response(__METHOD__ . ': argument should be instance of Jars');
+                throw new Exception(__METHOD__ . ': argument should be instance of Jars');
             }
 
             $prev = $this->jars;

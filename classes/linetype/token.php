@@ -2,6 +2,8 @@
 
 namespace jars\linetype;
 
+use Exception;
+
 class token extends \jars\Linetype
 {
     function __construct()
@@ -16,7 +18,7 @@ class token extends \jars\Linetype
             },
             'used' => function($records) : int {
                 if (!is_int($records['/']->used)) {
-                    error_response('"used" not an int: ' . var_export($record, 1));
+                    throw new Exception('"used" not an int: ' . var_export($record, 1));
                 }
                 return $records['/']->used;
             },

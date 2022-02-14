@@ -3,6 +3,7 @@
 namespace jars;
 
 use ReflectionFunction;
+use Exception;
 
 class Linetype
 {
@@ -47,7 +48,7 @@ class Linetype
             return $this->save($changed);
         }
 
-        error_response('No such tablelink');
+        throw new Exception('No such tablelink');
     }
 
     private function borrow_r($token, $line, $ignorelink = null)
@@ -60,7 +61,7 @@ class Linetype
             }
 
             if (!@$child->property) {
-                error_response('Inline link without property');
+                throw new Exception('Inline link without property');
             }
 
             if (property_exists($line, $child->property)) {
@@ -85,7 +86,7 @@ class Linetype
             $child_ignorelinks = array_merge($ignorelinks, [$child->tablelink]);
 
             if (!@$child->property) {
-                error_response('child definition missing property: ' . $this->name);
+                throw new Exception('child definition missing property: ' . $this->name);
             }
 
             if (!property_exists($line, $child->property) || !is_array($line->{$child->property})) {
@@ -99,7 +100,7 @@ class Linetype
 
         foreach (@$this->inlinelinks ?? [] as $child) {
             if (!@$child->property) {
-                error_response('Inline link without property');
+                throw new Exception('Inline link without property');
             }
 
             $childline = @$line->{$child->property};
@@ -200,7 +201,7 @@ class Linetype
             }
 
             if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
-                error_response('Parent does not exist');
+                throw new Exception('Parent does not exist');
             }
 
             $line->$alias = $parent_id;
@@ -211,7 +212,7 @@ class Linetype
 
     public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
     {
-        $tableinfo = @$this->jars->config(true)->tables[$this->table] ?? (object) [];
+        $tableinfo = @$this->jars->config()->tables[$this->table] ?? (object) [];
         $oldline = null;
         $oldrecord = null;
         $old_inlines = [];
@@ -223,7 +224,7 @@ class Linetype
 
         if (property_exists($line, '_is') && !$line->_is) { // Remove
             if (!@$line->id) {
-                error_response("Missing id for deletion");
+                throw new Exception("Missing id for deletion");
             }
 
             $is = false;
@@ -283,7 +284,7 @@ class Linetype
             $errors = $this->validate($line);
 
             if ($errors) {
-                error_response('Invalid ' . $this->name . ': ' . implode('; ', $errors) . '. ' . var_export($line, 1));
+                throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors) . '. ' . var_export($line, 1));
             }
 
             if (!@$line->id) { // Add
@@ -339,7 +340,7 @@ class Linetype
 
                 if (@$line->$alias) {
                     if (!is_string($line->$alias)) {
-                        error_response($alias . ' should be a string containing the id of another record ' . json_encode($line->$alias));
+                        throw new Exception($alias . ' should be a string containing the id of another record ' . json_encode($line->$alias));
                     }
 
                     $affecteds[] = (object) [
@@ -371,7 +372,7 @@ class Linetype
             }
 
             if (!@$child->property) {
-                error_response('Inlinelink without property');
+                throw new Exception('Inlinelink without property');
             }
 
             $child_linetype = $this->jars->linetype($child->linetype);
@@ -396,7 +397,7 @@ class Linetype
                     if (!@$childline->type) {
                         $childline->type = $child_linetype->name;
                     } elseif ($childline->type != $child_linetype->name) {
-                        error_response('Given line->type is not consistent with child linetype');
+                        throw new Exception('Given line->type is not consistent with child linetype');
                     }
 
                     $discard = [];
@@ -438,11 +439,11 @@ class Linetype
         if ($is) {
             foreach ($this->unfuse_fields as $unfuse_field => $callback) {
                 if (!is_callable($callback)) {
-                    error_response('Unfuse field set to non-callback: ' . $unfuse_field);
+                    throw new Exception('Unfuse field set to non-callback: ' . $unfuse_field);
                 }
 
                 if (@$tableinfo->format == 'binary' && $unfuse_field != 'content') {
-                    error_response('disktype \'binary\' does not support unfuse other than content');
+                    throw new Exception('disktype \'binary\' does not support unfuse other than content');
                 }
 
                 $record->{$unfuse_field} = $callback($line, $oldline);
@@ -479,7 +480,7 @@ class Linetype
                         if (!@$childline->type) {
                             $childline->type = $child_linetype->name;
                         } elseif ($childline->type != $child_linetype->name) {
-                            error_response('Given line->type is not consistent with child linetype');
+                            throw new Exception('Given line->type is not consistent with child linetype');
                         }
                     }
 
@@ -506,7 +507,7 @@ class Linetype
                     }
                 }
             } elseif (@$line->{$child->property}) {
-                error_response('Unexpected ' . $this->name . '->' . $child->property);
+                throw new Exception('Unexpected ' . $this->name . '->' . $child->property);
             }
 
             if (is_array(@$line->_adopt->{$child->property})) {
@@ -562,7 +563,7 @@ class Linetype
             }
 
             if (!@$child->property) {
-                error_response('Inline link without property');
+                throw new Exception('Inline link without property');
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
@@ -598,10 +599,10 @@ class Linetype
 
     public function get_childset($token, string $id, string $property)
     {
-        $child = find_object($this->children, 'property', 'is', $property);
+        $child = @array_values(array_filter($this->children, fn ($o) => $o->property == $property))[0];
 
         if (!$child) {
-            error_response('Could not find child property ' . $this->name . '->' . $property);
+            throw new Exception('Could not find child property ' . $this->name . '->' . $property);
         }
 
         $childset = [];
@@ -626,7 +627,7 @@ class Linetype
             }
 
             if (!@$child->property) {
-                error_response('Inline link without property');
+                throw new Exception('Inline link without property');
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
@@ -651,7 +652,7 @@ class Linetype
             if (!@$line->type) {
                 $line->type = $this->name;
             } elseif ($line->type != $this->name) {
-                error_response('Given line->type inconsistent with Linetype');
+                throw new Exception('Given line->type inconsistent with Linetype');
             }
         }
 
@@ -671,7 +672,7 @@ class Linetype
 
         foreach (@$this->inlinelinks ?? [] as $child) {
             if (!@$child->property) {
-                error_response('Inline link without property: ' . $this->name . ': ' .  $child->linetype);
+                throw new Exception('Inline link without property: ' . $this->name . ': ' .  $child->linetype);
             }
 
             if (@$line->{$child->property}) {
@@ -763,7 +764,7 @@ class Linetype
     {
         $this->fields[$name] = function ($records) use ($name, $allowed) : string {
             if (null === $as_string = @$allowed[$records['/']->$name]) {
-                error_response('Could not fuse enum "' . $this->name . '->' . $name . '" with value "' . @$records['/']->$name . '". Expected one of [' . implode(', ', array_map(fn ($v) => '"' . $v . '"', $allowed)) . ']');
+                throw new Exception('Could not fuse enum "' . $this->name . '->' . $name . '" with value "' . @$records['/']->$name . '". Expected one of [' . implode(', ', array_map(fn ($v) => '"' . $v . '"', $allowed)) . ']');
             }
 
             return $as_string;
@@ -771,7 +772,7 @@ class Linetype
 
         $this->unfuse_fields[$name] = function ($line, $oldline) use ($name, $allowed) : int {
             if (($as_int = @array_flip($allowed)[$line->$name]) === null) {
-                error_response('Could not unfuse enum ' . $name);
+                throw new Exception('Could not unfuse enum ' . $name);
             }
 
             return $as_int;
@@ -944,7 +945,7 @@ class Linetype
             return;
         }
 
-        error_response('unsupported literal type');
+        throw new Exception('unsupported literal type');
     }
 
     public function equal($record_a, $record_b)
@@ -1010,7 +1011,7 @@ class Linetype
             $jars = func_get_arg(0);
 
             if (!($jars instanceof Jars)) {
-                error_response(__METHOD__ . ': argument should be instance of Jars');
+                throw new Exception(__METHOD__ . ': argument should be instance of Jars');
             }
 
             $prev = $this->jars;
@@ -1028,7 +1029,7 @@ class Linetype
             $filesystem = func_get_arg(0);
 
             if (!($filesystem instanceof Filesystem)) {
-                error_response(__METHOD__ . ': argument should be instance of Filesystem');
+                throw new Exception(__METHOD__ . ': argument should be instance of Filesystem');
             }
 
             $prev = $this->filesystem;

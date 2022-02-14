@@ -2,6 +2,8 @@
 
 namespace jars;
 
+use Exception;
+
 class Record
 {
     private $data;
@@ -17,7 +19,7 @@ class Record
     {
         $this->jars = $jars;
 
-        if ($tableinfo = @$this->jars->config(true)->tables[$table]) {
+        if ($tableinfo = @$this->jars->config()->tables[$table]) {
             $this->format = @$tableinfo->format;
             $this->extension = @$tableinfo->extension;
         }
@@ -62,12 +64,12 @@ class Record
     public function __set(string $property, $value)
     {
         if (!is_null($value) && !is_scalar($value)) {
-            error_response('Attempt made to save non-scalar data to a record');
+            throw new Exception('Attempt made to save non-scalar data to a record');
         }
 
         if ($property == 'id') {
             if (!is_string($value)) {
-                error_response('Attempt made to save non-string id to a record');
+                throw new Exception('Attempt made to save non-string id to a record');
             }
 
             $this->id = $value;
@@ -119,7 +121,7 @@ class Record
     public function save()
     {
         if ($this->id === null) {
-            error_response('Tried to save record without id');
+            throw new Exception('Tried to save record without id');
         }
 
         if ($this->data === null || !$this->dirty) {
@@ -132,7 +134,7 @@ class Record
     public function assertExistence()
     {
         if (!$this->exists()) {
-            error_response("import_r: No such record: {$this->table}/{$this->id}");
+            throw new Exception("import_r: No such record: {$this->table}/{$this->id}");
         }
     }
 
@@ -159,7 +161,7 @@ class Record
             $this->data = json_decode($content, true);
 
             if (!is_array($this->data)) {
-                error_response($this->data);
+                throw new Exception($this->data);
             }
         }
     }
@@ -167,7 +169,7 @@ class Record
     private function file()
     {
         if (!$this->id) {
-            error_response('Could not generate filename');
+            throw new Exception('Could not generate filename');
         }
 
         $version_path = $this->version ? 'past/' . $this->version : 'current';

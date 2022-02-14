@@ -2,6 +2,8 @@
 
 namespace jars;
 
+use Exception;
+
 class Jars implements contract\Client
 {
     private $db_home;
@@ -53,16 +55,18 @@ class Jars implements contract\Client
     public function login(string $username, string $password, bool $one_time = false)
     {
         if (!$this->validate_username($username)) {
-            error_response('Invalid username');
+            throw new Exception('Invalid username');
         }
 
         if (!$this->validate_password($password)) {
-            error_response('Invalid password');
+            throw new Exception('Invalid password');
         }
 
-        if (($root_username = $this->config(true)->root_username) && $username == $root_username) {
-            if (!($root_password = $this->config(true)->root_password)) {
-                error_response('Root username is set up without a root password');
+        $config = $this->config();
+
+        if (($root_username = $config->root_username) && $username == $root_username) {
+            if (!($root_password = $config->root_password)) {
+                throw new Exception('Root username is set up without a root password');
             }
 
             if ($password !== $root_password) {
@@ -112,7 +116,7 @@ class Jars implements contract\Client
             return;
         }
 
-        return $this->verified_tokens[$token]->username ?? $this->config(true)->root_username;
+        return $this->verified_tokens[$token]->username ?? $this->config()->root_username;
     }
 
     public function verify_token(string $token)
@@ -150,7 +154,7 @@ class Jars implements contract\Client
             $userfile = $this->db_home . '/current/records/users/' . $line->user . '.json';
 
             if (!$this->filesystem->has($userfile)) {
-                error_response('Token Verification Error 1', 500);
+                throw new Exception('Token Verification Error 1', 500);
             }
 
             $user = json_decode($this->filesystem->get($userfile));
@@ -159,7 +163,7 @@ class Jars implements contract\Client
         $token_object = (object) [
             'token' => $line->token,
             'user' => @$user->id,
-            'username' => @$user->username ?? $this->config(true)->root_username
+            'username' => @$user->username ?? $this->config()->root_username
         ];
 
         $this->verified_tokens[$token] = $token_object;
@@ -225,7 +229,7 @@ class Jars implements contract\Client
                     break;
 
                 default:
-                    error_response('Unknown action: ' . @$affected->action);
+                    throw new Exception('Unknown action: ' . @$affected->action);
             }
         }
 
@@ -258,11 +262,11 @@ class Jars implements contract\Client
 
         foreach ($lines as $line) {
             if (!is_object($line)) {
-                error_response('Lines should be an array of objects');
+                throw new Exception('Lines should be an array of objects');
             } elseif (!property_exists($line, 'type')) {
-                error_response('All lines must have a type');
+                throw new Exception('All lines must have a type');
             } elseif (!array_key_exists($line->type, $config->linetypes)) {
-                error_response('Unrecognised linetype: ' . $line->type);
+                throw new Exception('Unrecognised linetype: ' . $line->type);
             }
         }
 
@@ -342,7 +346,7 @@ class Jars implements contract\Client
 
     public function h2n($h)
     {
-        $sequence = $this->config(true)->sequence;
+        $sequence = $this->config()->sequence;
 
         for ($n = 1; $n <= $sequence->max; $n++) {
             if ($this->n2h($n) == $h) {
@@ -354,7 +358,7 @@ class Jars implements contract\Client
     public function n2h($n)
     {
         // Generate a sequence secret: php -r 'echo base64_encode(random_bytes(32)) . "\n";'
-        $sequence = $this->config(true)->sequence;
+        $sequence = $this->config()->sequence;
 
         $banned = @$sequence->banned_chars ?? [];
         $replace = array_fill(0, count($banned), '');
@@ -362,11 +366,11 @@ class Jars implements contract\Client
         $subs = @$sequence->subs ?? [];
 
         if (!$sequence_secret) {
-            error_response('Sequence Secret not defined');
+            throw new Exception('Sequence Secret not defined');
         }
 
         if (strlen($sequence_secret) < 8) {
-            error_response('Sequence Secret too weak (8-char minimum)');
+            throw new Exception('Sequence Secret too weak (8-char minimum)');
         }
 
         if (isset($subs[$n])) {
@@ -382,11 +386,11 @@ class Jars implements contract\Client
         $master_meta_file = $master_record_file . '.meta';
 
         if (!touch($master_record_file) || !is_writable($master_record_file)) {
-            error_response('Master record file not writable');
+            throw new Exception('Master record file not writable');
         }
 
         if (!touch($master_meta_file) || !is_writable($master_meta_file)) {
-            error_response('Master meta file not writable');
+            throw new Exception('Master meta file not writable');
         }
     }
 
@@ -420,9 +424,9 @@ class Jars implements contract\Client
         return $this->import(date('Y-m-d H:i:s'), $lines, true);
     }
 
-    public function record($table, $id, &$content_type)
+    public function record($table, $id, &$content_type = null)
     {
-        $tableinfo = @$this->config(true)->tables[$table];;
+        $tableinfo = @$this->config()->tables[$table];;
         $ext = @$tableinfo->extension ?? 'json';
         $suffix = $ext ? '.' . $ext : null;
         $content_type = @$tableinfo->content_type ?? 'application/json';
@@ -447,7 +451,7 @@ class Jars implements contract\Client
     public function touch()
     {
         if (!$this->verify_token($this->token())) {
-            error_response('Invalid / Expired Token');
+            throw new Exception('Invalid / Expired Token');
         }
 
         return (object) [
@@ -460,45 +464,30 @@ class Jars implements contract\Client
         return $this->head;
     }
 
-    public function config(bool $get_base_config = false)
+    public function config()
     {
-        $token = $get_base_config ? null : $this->token;
+        if (!isset($this->known['configs'][$this->portal_home])) {
+            $config = require $this->portal_home . '/portal.php';
 
-        if (isset($this->known['configs'][$this->portal_home . '--' . $token])) {
-            return $this->known['configs'][$this->portal_home . '--' . $token];
-        }
-
-        $entrypoint = 'base';
-
-        if ($token && $this->verify_token($token)) {
-            $entrypoint = 'public';
-            $base_config = require $this->portal_home . '/entrypoints/base.php';
-
-            if (($root_username = $base_config->root_username) && $this->token_username($token) == $root_username) {
-                $entrypoint = 'root';
+            foreach (['linetypes', 'tables', 'reports'] as $listname) {
+                if (!property_exists($config, $listname)) {
+                    $config->{$listname} = [];
+                }
             }
-        }
 
-        $config = require $this->portal_home . '/entrypoints/' . $entrypoint . '.php';
-
-        foreach (['linetypes', 'tables', 'reports'] as $listname) {
-            if (!property_exists($config, $listname)) {
-                $config->{$listname} = [];
+            if (!in_array('token', array_keys($config->linetypes))) {
+                $config->linetypes['token'] = (object) [
+                    'cancreate' => true,
+                    'canwrite' => true,
+                    'candelete' => true,
+                    'class' => 'jars\\linetype\\token',
+                ];
             }
+
+            $this->known['configs'][$this->portal_home] = $config;
         }
 
-        if (!in_array('token', array_keys($config->linetypes))) {
-            $config->linetypes['token'] = (object) [
-                'cancreate' => true,
-                'canwrite' => true,
-                'candelete' => true,
-                'class' => 'jars\\linetype\\token',
-            ];
-        }
-
-        $this->known['configs'][$this->portal_home . '--' . $token] = $config;
-
-        return $config;
+        return $this->known['configs'][$this->portal_home];
     }
 
     public function linetype(string $name, bool $from_base_config = false)
@@ -507,7 +496,7 @@ class Jars implements contract\Client
             $linetypeclass = $this->config($from_base_config)->linetypes[$name]->class;
 
             if (!$linetypeclass) {
-                error_response("No such linetype '{$name}'");
+                throw new Exception("No such linetype '{$name}'");
             }
 
             $linetype = new $linetypeclass();
@@ -532,7 +521,7 @@ class Jars implements contract\Client
             $reportclass = @$this->config()->reports[$name];
 
             if (!$reportclass) {
-                error_response("No such report '{$name}'");
+                throw new Exception("No such report '{$name}'");
             }
 
             $report = new $reportclass();
@@ -566,7 +555,7 @@ class Jars implements contract\Client
             $filesystem = func_get_arg(0);
 
             if (!($filesystem instanceof Filesystem)) {
-                error_response(__METHOD__ . ': argument should be instance of Filesystem');
+                throw new Exception(__METHOD__ . ': argument should be instance of Filesystem');
             }
 
             $prev = $this->filesystem;
@@ -584,7 +573,7 @@ class Jars implements contract\Client
             $token = func_get_arg(0);
 
             if (!is_string($token)) {
-                error_response(__METHOD__ . ': argument should be a string');
+                throw new Exception(__METHOD__ . ': argument should be a string');
             }
 
             $prev = $this->token;
