@@ -599,4 +599,284 @@ class Jars implements contract\Client
     {
         return $this->linetype($linetype)->get_childset($this->token, $id, $property);
     }
+
+    public function refresh() : string
+    {
+        $reports_dir = $this->db_path('reports');
+        $lines_dir = $reports_dir . '/.refreshd/lines';
+
+        if (!is_dir($lines_dir)) {
+            mkdir($lines_dir, 0777, true);
+        }
+
+        $bunny = $this->filesystem->get($this->db_path('/version.dat'));
+        $bunny_number = (int) $this->filesystem->get($this->db_path('versions/' . $bunny));
+
+        $greyhound = null;
+        $greyhound_number = 0;
+
+        if ($this->filesystem->has($greyhound_file = $reports_dir . "/version.dat")) {
+            $greyhound = $this->filesystem->get($greyhound_file);
+            $greyhound_number = (int) $this->filesystem->get($this->db_path('versions/' . $greyhound));
+        }
+
+        if ($bunny == $greyhound) {
+            return $greyhound;
+        }
+
+        if ($bunny_number > $greyhound_number) {
+            $from = $greyhound_number + 1;
+            $direction = 'forward';
+            $sorter = null;
+        } else {
+            $from = $bunny_number + 1;
+            $direction = 'back';
+            $sorter = 'array_reverse';
+        }
+
+        $length = abs($bunny_number - $greyhound_number);
+        $master_meta_file = $this->db_path('master.dat.meta');
+        $metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | head -n $length | cut -c66- | sed 's/ /\\n/g'`));
+
+        if ($sorter) {
+            $metas = $sorter($metas);
+        }
+
+        $changes = [];
+
+        foreach ($metas as $meta) {
+            if (!preg_match('/^([+-~])([a-z]+):([A-Z0-9]+)$/', $meta, $matches)) {
+                error_response('Invalid meta line: ' . $meta);
+            }
+
+            list(, $sign, $type, $id) = $matches;
+
+            if (!isset($changes[$id])) {
+                $changes[$id] = (object) [
+                    'type' => $type,
+                ];
+            }
+
+            $changes[$id]->sign = $sign;
+        }
+
+        $lines = [];
+        $childsets = [];
+
+        // propagate
+
+        if ($greyhound) {
+            foreach ($changes as $id => $change) {
+                $this->propagate_r($change->type, $id, $greyhound, $changes);
+            }
+        }
+
+        foreach (array_keys($this->config()->reports) as $report_name) {
+            $report = $this->report($report_name);
+
+            foreach ($changes as $id => $change) {
+                foreach ($report->listen as $linetype => $listen) {
+                    if (is_numeric($linetype)) {
+                        $linetype = $listen;
+                        $listen = (object) [];
+                    }
+
+                    $table = $this->linetype($linetype)->table;
+
+                    if ($change->type != $table) {
+                        continue;
+                    }
+
+                    $current_groups = [];
+                    $past_groups = [];
+
+                    if (in_array($change->sign, ['+', '~', '*'])) {
+                        if (!isset($lines[$linetype])) {
+                            $lines[$linetype] = [];
+                        }
+
+                        $linetype_lines = &$lines[$linetype];
+
+                        if (!isset($linetype_lines[$id])) {
+                            $linetype_lines[$id] = $this->get($linetype, $id);
+                        }
+
+                        $line = clone $lines[$linetype][$id];
+
+                        $this->load_children_r($line, @$listen->children ?? [], $childsets);
+
+                        if (property_exists($listen, 'classify')) {
+                            $current_groups = static::classifier_value($listen->classify, $line);
+                        } elseif (property_exists($report, 'classify')) {
+                            $current_groups = static::classifier_value($report->classify, $line);
+                        } elseif (property_exists($line, '_groups') && is_string($line->_group)) {
+                            $current_groups = explode(',', $line->_groups);
+                        } else {
+                            $current_groups = ['all'];
+                        }
+                    }
+
+                    $groups_file = $lines_dir . '/' . $report_name . '/' . $id . '.json';
+
+                    if (!is_dir(dirname($groups_file))) {
+                        mkdir(dirname($groups_file));
+                    }
+
+                    if (in_array($change->sign, ['-', '~', '*'])) {
+                        $past_groups = $this->filesystem->has($groups_file) ? json_decode($this->filesystem->get($groups_file))->groups : [];
+                    }
+
+                    // remove
+
+                    if (!is_array($current_groups)) {
+                        error_response($current_groups);
+                    }
+
+                    foreach (array_diff($past_groups, $current_groups) as $group) {
+                        $report->delete($group, $id);
+                    }
+
+                    // upsert
+
+                    foreach ($current_groups as $group) {
+                        $report->upsert($group, $line, @$report->sorter);
+                    }
+
+                    if ($current_groups) {
+                        $this->filesystem->put($groups_file, json_encode(['groups' => $current_groups]));
+                    } elseif ($this->filesystem->has($groups_file)) {
+                        unlink($groups_file);
+                    }
+                }
+            }
+        }
+
+        $past_dir = $this->db_path('past');
+
+        // TODO: This assumes we never interact with past dir via Filesystem class, so implement Filesystem::find() instead
+
+        foreach (explode("\n", `test -d "$past_dir" && find "$past_dir" -type f || true`) as $pastfile) {
+            $this->filesystem->put($pastfile, null);
+        };
+
+        $this->filesystem->put($greyhound_file, $bunny); // the greyhound has caught the bunny!
+
+        return $bunny;
+    }
+
+    private static function classifier_value($classify, $line) {
+        if (is_array($classify)) {
+            return $classify;
+        }
+
+        if (is_string($classify)) {
+            return [$classify];
+        }
+
+        if (is_callable($classify)) {
+            $groups = ($classify)($line);
+
+            if (!is_array($groups) || array_filter($groups, function ($group) { return !is_string($group) || !$group; })) {
+                error_response('Invalid classication result');
+            }
+
+            return $groups;
+        }
+
+        error_response('Invalid classifier');
+    }
+
+    private function load_children_r(object $line, array $children, array &$childsets)
+    {
+        foreach ($children as $property => $child) {
+            if (is_numeric($property)) {
+                $property = $child;
+                $child = (object) [];
+            }
+
+            if (!isset($childsets[$line->type])) {
+                $childsets[$line->type] = [];
+            }
+
+            $linetype_childsets = &$childsets[$line->type];
+
+            if (!isset($linetype_childsets[$line->id])) {
+                $linetype_childsets[$line->id] = [];
+            }
+
+            $line_childsets = &$linetype_childsets[$line->id];
+
+            if (!isset($line_childsets[$property])) {
+                $line_childsets[$property] = $this->get_childset($line->type, $line->id, $property);
+            }
+
+            $childset = $line_childsets[$property];
+
+            if (property_exists($child, 'filter')) {
+                if (!is_callable($child->filter)) {
+                    error_response('Invalid filter');
+                }
+
+                $childset = array_filter($childset, $child->filter);
+            }
+
+            if (property_exists($child, 'sorter')) {
+                if (!is_callable($child->sorter)) {
+                    error_response('Invalid sorter');
+                }
+
+                usort($childset, $child->sorter);
+            }
+
+            $line->$property = $childset;
+
+            if (property_exists($child, 'children')) {
+                if (!is_array($child->children)) {
+                    error_response('Invalid children');
+                }
+
+                foreach ($childset as $childline) {
+                    $this->load_children_r($childline, $child->children, $childsets);
+                }
+            }
+        }
+    }
+
+    private function propagate_r(string $linetype, string $id, string $version, array &$changes = [], array &$seen = [])
+    {
+        $linetype = $this->linetype($linetype);
+
+        $relatives = array_merge(
+            $linetype->find_incoming_links(),
+            $linetype->find_incoming_inlines(),
+        );
+
+        foreach ($relatives as $relative) {
+            $links = [
+                Link::of($this, $relative->tablelink, $id, !@$relative->reverse, $version),
+                Link::of($this, $relative->tablelink, $id, !@$relative->reverse)
+            ];
+
+            foreach ($links as $link) {
+                foreach ($link->relatives() as $relative_id) {
+                    $table = $this->linetype($relative->parent_linetype)->table;
+
+                    $change = (object) [
+                        'type' => $table,
+                        'sign' => '*',
+                    ];
+
+                    if (!isset($changes[$relative_id])) {
+                        $changes[$relative_id] = $change;
+                    }
+
+                    if (!isset($seen[$key = $relative->parent_linetype . ':' . $relative_id])) {
+                        $seen[$key] = true;
+
+                        $this->propagate_r($relative->parent_linetype, $relative_id, $version, $changes, $seen);
+                    }
+                }
+            }
+        }
+    }
 }
