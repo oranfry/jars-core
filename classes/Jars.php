@@ -401,7 +401,7 @@ class Jars implements contract\Client
 
     public function fields($linetype)
     {
-        return $this->linetype(LINETYPE_NAME)->fieldInfo();
+        return $this->linetype($linetype)->fieldInfo();
     }
 
     public function get($linetype, $id)

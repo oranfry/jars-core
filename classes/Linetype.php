@@ -972,7 +972,25 @@ class Linetype
 
     public function fieldInfo()
     {
-        $fields = [];
+        $newline_fields = @$this->jars->config()->respect_newline_fields[$this->name] ?? [];
+
+        $fields = [
+            (object) [
+                'name' => 'id',
+                'src' => 'builtin',
+                'type' => 'string',
+                'multiline' => false,
+            ],
+        ];
+
+        foreach (array_filter(array_map(fn ($link) => @$link->only_parent, $this->find_incoming_links())) as $parent_field) {
+            $fields[] = (object) [
+                'name' => $parent_field,
+                'src' => 'parent',
+                'type' => 'string',
+                'multiline' => false,
+            ];
+        }
 
         foreach (['fields', 'borrow'] as $src) {
             foreach ($this->$src as $name => $callback) {
@@ -983,6 +1001,7 @@ class Linetype
                     'name' => $name,
                     'src' => $src,
                     'type' => $fieldType,
+                    'multiline' => in_array($name, $newline_fields),
                 ];
             }
         }
