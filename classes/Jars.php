@@ -134,7 +134,12 @@ class Jars implements contract\Client
         list (, $id, $random_bits) = $groups;
 
         $time = microtime(true);
-        $line = $this->linetype('token', true)->get(null, $id);
+
+        $line = null;
+
+        try {
+            $line = $this->linetype('token', true)->get(null, $id);
+        } catch (Exception $e) {}
 
         if (
             !$line
