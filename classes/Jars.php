@@ -884,4 +884,66 @@ class Jars implements contract\Client
             }
         }
     }
+
+    public function reports() : array
+    {
+        $reports = [];
+        $config = $this->config();
+
+        foreach (array_keys($config->reports) as $name) {
+            $report = $this->report($name);
+            $fields = [];
+
+            foreach (@$config->report_fields[$name] ?? ['id'] as $field) {
+                if (is_string($field)) {
+                    $field = (object) ['name' => $field];
+                }
+
+                if (!@$field->type) {
+                    $field->type = 'string';
+                }
+
+                $fields[] = $field;
+            }
+
+            $reports[] = (object) [
+                'name' => $name,
+                'fields' => $fields,
+            ];
+        }
+
+        usort($reports, fn ($a, $b) => $a->name <=> $b->name);
+
+        return $reports;
+    }
+
+    public function linetypes(?string $report = null) : array
+    {
+        if ($report) {
+            if (!array_key_exists($report, $this->config()->reports)) {
+                throw new Exception('No such report [' . $report . ']');
+            }
+
+            $names = [];
+
+            foreach ($this->report($report)->listen as $key => $value) {
+                if (is_string($value)) {
+                    $names[] = $value;
+                } else {
+                    $names[] = $key;
+                }
+            }
+        } else {
+            $names = array_keys($this->config()->linetypes);
+        }
+
+        sort($names);
+
+        $linetypes = array_map(fn ($name) => (object) [
+            'name' => $name,
+            'fields' => $this->fields($name),
+        ], $names);
+
+        return $linetypes;
+    }
 }
