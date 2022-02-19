@@ -456,7 +456,7 @@ class Jars implements contract\Client
     public function touch()
     {
         if (!$this->verify_token($this->token())) {
-            throw new Exception('Invalid / Expired Token');
+            return false;
         }
 
         return (object) [
