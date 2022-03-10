@@ -238,27 +238,21 @@ class Jars implements contract\Client
             }
         }
 
+        $updated = $this->dredge_r($lines);
+
         if ($dryrun) {
-            $updated = [];
-
-            foreach ($lines as $line) {
-                $updated[] = $this->linetype($line->type)->get($this->token, $line->id);
-            }
-
             $this->filesystem->revert();
+        } else {
+            $commits = array_filter($commits);
 
-            return $updated;
+            $this->commit($timestamp, $commits, $meta);
+
+            if (defined('JARS_PERSIST_PER_IMPORT') && JARS_PERSIST_PER_IMPORT) {
+                $this->filesystem->persist();
+            }
         }
 
-        $commits = array_filter($commits);
-
-        $this->commit($timestamp, $commits, $meta);
-
-        if (defined('BLENDS_PERSIST_PER_IMPORT') && BLENDS_PERSIST_PER_IMPORT) {
-            $this->filesystem->persist();
-        }
-
-        return $lines;
+        return $updated;
     }
 
     public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null)
@@ -945,5 +939,32 @@ class Jars implements contract\Client
         ], $names);
 
         return $linetypes;
+    }
+
+    private function dredge_r($lines)
+    {
+        $dredged = [];
+
+        foreach ($lines as $line) {
+            if (@$line->_is !== false) {
+                $_line = $this->linetype($line->type)->get($this->token, $line->id);
+            } else {
+                $_line = (object) [
+                    '_is' => false,
+                    'id' => $line->id,
+                    'type' => $line->type,
+                ];
+            }
+
+            foreach (array_keys(get_object_vars($line)) as $key) {
+                if (is_array($line->$key)) {
+                    $_line->$key = $this->dredge_r($line->$key);
+                }
+            }
+
+            $dredged[] = $_line;
+        }
+
+        return $dredged;
     }
 }
