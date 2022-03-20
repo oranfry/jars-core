@@ -212,6 +212,8 @@ class Linetype
 
     public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
     {
+        global $id_map;
+
         $tableinfo = @$this->jars->config()->tables[$this->table] ?? (object) [];
         $oldline = null;
         $oldrecord = null;
@@ -288,7 +290,10 @@ class Linetype
             }
 
             if (!@$line->id) { // Add
+                global $takeanumber_table;
+                $takeanumber_table = $this->table;
                 $line->id = $this->jars->takeanumber();
+                $takeanumber_table = null;
             }
 
             $record = $oldrecord ? (clone $oldrecord) : Record::of($this->jars, $this->table);
@@ -360,7 +365,8 @@ class Linetype
         if ($logging !== null) {
             $verb = @$line->_is === false ? '-' : (@$line->given_id ? '~' : '+');
             echo str_repeat(' ', $logging * 4);
-            echo $verb . '[' . $line->type . ':' . $line->id . ']';
+            // echo $verb . '[' . $line->type . ':' . $line->id . ']';
+            echo $verb . '[' . $line->type . ':' . $line->id . (@$id_map['new:' . $line->id] ? ' née ' . $id_map['new:' . $line->id] : null) . ']';
             echo "\n";
         }
 
