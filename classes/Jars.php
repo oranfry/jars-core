@@ -645,7 +645,7 @@ class Jars implements contract\Client
 
         foreach ($metas as $meta) {
             if (!preg_match('/^([+-~])([a-z]+):([A-Z0-9]+)$/', $meta, $matches)) {
-                error_response('Invalid meta line: ' . $meta);
+                throw new Exception('Invalid meta line: ' . $meta);
             }
 
             list(, $sign, $type, $id) = $matches;
@@ -728,7 +728,7 @@ class Jars implements contract\Client
                     // remove
 
                     if (!is_array($current_groups)) {
-                        error_response($current_groups);
+                        throw new Exception($current_groups);
                     }
 
                     foreach (array_diff($past_groups, $current_groups) as $group) {
@@ -776,13 +776,13 @@ class Jars implements contract\Client
             $groups = ($classify)($line);
 
             if (!is_array($groups) || array_filter($groups, function ($group) { return !is_string($group) || !$group; })) {
-                error_response('Invalid classication result');
+                throw new Exception('Invalid classication result');
             }
 
             return $groups;
         }
 
-        error_response('Invalid classifier');
+        throw new Exception('Invalid classifier');
     }
 
     private function load_children_r(object $line, array $children, array &$childsets)
@@ -813,7 +813,7 @@ class Jars implements contract\Client
 
             if (property_exists($child, 'filter')) {
                 if (!is_callable($child->filter)) {
-                    error_response('Invalid filter');
+                    throw new Exception('Invalid filter');
                 }
 
                 $childset = array_filter($childset, $child->filter);
@@ -821,7 +821,7 @@ class Jars implements contract\Client
 
             if (property_exists($child, 'sorter')) {
                 if (!is_callable($child->sorter)) {
-                    error_response('Invalid sorter');
+                    throw new Exception('Invalid sorter');
                 }
 
                 usort($childset, $child->sorter);
@@ -831,7 +831,7 @@ class Jars implements contract\Client
 
             if (property_exists($child, 'children')) {
                 if (!is_array($child->children)) {
-                    error_response('Invalid children');
+                    throw new Exception('Invalid children');
                 }
 
                 foreach ($childset as $childline) {
