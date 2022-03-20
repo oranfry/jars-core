@@ -231,6 +231,7 @@ class Jars implements contract\Client
                 case 'save':
                     $affected->record->save();
                     $meta[] = ($affected->oldrecord ? '~' : '+') . $affected->table . ':' . $affected->id;
+
                     break;
 
                 default:
@@ -372,8 +373,12 @@ class Jars implements contract\Client
             throw new Exception('Sequence Secret too weak (8-char minimum)');
         }
 
-        if (isset($subs[$n])) {
-            return $subs[$n];
+        global $next_sub_id;
+
+        if (preg_match('/^(.*)\-\-(.*)$/', $n, $matches) && isset($subs[$matches[2]][$matches[1]])) {
+            $next_sub_id = $subs[$matches[2]][$matches[1]];
+
+            return $next_sub_id;
         }
 
         $id = substr(str_replace($banned, $replace, base64_encode(hex2bin(hash('sha256', $n . '--' . $sequence_secret)))), 0, $sequence->size ?? 12);
@@ -547,9 +552,29 @@ class Jars implements contract\Client
 
     public function takeanumber()
     {
+        global $takeanumber_table, $id_map, $next_sub_id, $new_subs;
+        static $old_pointers;
+
+        if (empty($old_pointers)) {
+            $old_pointers = [];
+        }
+
+        $old_pointer = @$old_pointers[$takeanumber_table] ?? 1;
+        $old_pointers[$takeanumber_table] = $old_pointer + 1;
+        $old_id = $this->n2h($old_pointer . '--' . $takeanumber_table);
+
         $pointer_file = $this->db_home . '/pointer.dat';
         $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
         $this->filesystem->put($pointer_file, $pointer + 1);
+
+        if ($next_sub_id) {
+            $id = $new_subs[$pointer] = $next_sub_id;
+            $next_sub_id = null;
+        } else {
+            $id_map[$old_id] = $id;
+            $id_map["new:$id"] = $old_id;
+            // echo "Saved map $old_id → $id\n";
+        }
 
         return $id;
     }
@@ -762,7 +787,7 @@ class Jars implements contract\Client
 
         foreach (explode("\n", `test -d "$past_dir" && find "$past_dir" -type f || true`) as $pastfile) {
             $this->filesystem->put($pastfile, null);
-        };
+        }
 
         $this->filesystem->put($greyhound_file, $bunny); // the greyhound has caught the bunny!
 
