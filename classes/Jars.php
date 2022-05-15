@@ -858,7 +858,12 @@ class Jars implements contract\Client
 
             foreach ($links as $link) {
                 foreach ($link->relatives() as $relative_id) {
-                    $table = $this->linetype($relative->parent_linetype)->table;
+                    $relative_linetype = $this->linetype($relative->parent_linetype);
+                    $table = $relative_linetype->table;
+
+                    if (!Record::of($this, $table, $relative_id)->exists()) {
+                        continue;
+                    }
 
                     $change = (object) [
                         'type' => $table,
