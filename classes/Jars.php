@@ -819,16 +819,6 @@ class Jars implements contract\Client
                 $childset = array_filter($childset, $child->filter);
             }
 
-            if (property_exists($child, 'sorter')) {
-                if (!is_callable($child->sorter)) {
-                    throw new Exception('Invalid sorter');
-                }
-
-                usort($childset, $child->sorter);
-            }
-
-            $line->$property = $childset;
-
             if (property_exists($child, 'children')) {
                 if (!is_array($child->children)) {
                     throw new Exception('Invalid children');
@@ -838,6 +828,24 @@ class Jars implements contract\Client
                     $this->load_children_r($childline, $child->children, $childsets);
                 }
             }
+
+            if (property_exists($child, 'latefilter')) {
+                if (!is_callable($child->latefilter)) {
+                    throw new Exception('Invalid filter');
+                }
+
+                $childset = array_filter($childset, $child->latefilter);
+            }
+
+            if (property_exists($child, 'sorter')) {
+                if (!is_callable($child->sorter)) {
+                    throw new Exception('Invalid sorter');
+                }
+
+                usort($childset, $child->sorter);
+            }
+
+            $line->$property = array_values($childset);
         }
     }
 
