@@ -800,6 +800,37 @@ class Linetype
         };
     }
 
+    protected function simple_hex(string $name, ?string $default = null)
+    {
+        if (@hex2bin($default) === false) {
+            throw new Exception(__METHOD__ . ': default value is not valid hex');
+        }
+
+        $this->fields[$name] = $this->df_hex($name);
+        $this->unfuse_fields[$name] = $this->du_hex($name);
+
+        $this->validations[] = function ($line) use ($name) : ?string {
+            if (($value = @$line->$name) && @hex2bin($value) === false) {
+                return 'Invalid hexidecimal value for ' . $name;
+            }
+
+            return null;
+        };
+
+        $this->completions[] = function ($line) use ($name, $default) {
+            if (!property_exists($line, $name) || $line->$name === null) {
+                $line->$name = $default;
+            }
+        };
+    }
+
+    protected function simple_hexs()
+    {
+        foreach (func_get_args() as $name) {
+            $this->simple_hex($name);
+        }
+    }
+
     protected function simple_int(string $name, ?int $default = null)
     {
         $this->fields[$name] = $this->df_int($name);
@@ -817,6 +848,28 @@ class Linetype
         foreach (func_get_args() as $name) {
             $this->simple_int($name);
         }
+    }
+
+    protected function df_hex(string $name)
+    {
+        return function($records) use ($name) : ?string {
+            if (!$base64 = $records['/']->{$name}) {
+                return null;
+            }
+
+            return bin2hex(base64_decode($base64));
+        };
+    }
+
+    protected function du_hex(string $name)
+    {
+        return function($line, $oldline) use ($name) : ?string {
+            if (false === $bin = @hex2bin(@$line->{$name})) {
+                return null;
+            }
+
+            return base64_encode($bin);
+        };
     }
 
     protected function df_int(string $name)
