@@ -800,6 +800,61 @@ class Linetype
         };
     }
 
+    protected function simple_enum_multi(string $name, array $allowed, ?string $default = null)
+    {
+        $this->fields[$name] = function ($records) use ($name, $allowed) : string {
+            $values = [];
+
+            foreach ($allowed as $i => $allowed_value) {
+                if ($records['/']->$name & (1 << $i)) {
+                    $values[] = $allowed_value;
+                }
+            }
+
+            return implode(',', $values);
+        };
+
+        $this->unfuse_fields[$name] = function ($line, $oldline) use ($name, $allowed) : int {
+            $as_int = 0;
+            $values = $line->$name ? explode(',', $line->$name) : [];
+
+            foreach ($allowed as $i => $allowed_value) {
+                if (in_array($allowed_value, $values)) {
+                    $as_int |= (1 << $i);
+                }
+            }
+
+            return $as_int;
+        };
+
+        $this->validations[] = function ($line) use ($name, $allowed) : ?string {
+            $values = $line->$name ? explode(',', $line->$name) : [];
+
+            foreach ($values as $value) {
+                if (!in_array($value, $allowed)) {
+                    return 'invalid ' . $name . '. Unrecognised value "' . $value . '"';
+                }
+            }
+
+            return null;
+        };
+
+        $default_as_int = 0;
+        $default_values = $default ? explode(',', $default) : [];
+
+        foreach ($allowed as $i => $allowed_value) {
+            if (in_array($allowed_value, $default_values)) {
+                $default_as_int |= (1 << $i);
+            }
+        }
+
+        $this->completions[] = function ($line) use ($name, $default_as_int) {
+            if (!property_exists($line, $name) || $line->$name === null) {
+                $line->$name = $default_as_int;
+            }
+        };
+    }
+
     protected function simple_hex(string $name, ?string $default = null)
     {
         if (@hex2bin($default) === false) {
