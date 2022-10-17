@@ -376,7 +376,13 @@ class Jars implements contract\Client
             return $subs[$n];
         }
 
-        return strtoupper(substr(str_replace($banned, $replace, base64_encode(hex2bin(hash('sha256', $n . '--' . $sequence_secret)))), 0, 10));
+        $id = substr(str_replace($banned, $replace, base64_encode(hex2bin(hash('sha256', $n . '--' . $sequence_secret)))), 0, $sequence->size ?? 12);
+
+        if (isset($sequence->transform)) {
+            $id = call_user_func($sequence->transform, $id);
+        }
+
+        return $id;
     }
 
     public function masterlog_check()
