@@ -650,7 +650,7 @@ class Jars implements contract\Client
         $changes = [];
 
         foreach ($metas as $meta) {
-            if (!preg_match('/^([+-~])([a-z]+):([A-Z0-9]+)$/', $meta, $matches)) {
+            if (!preg_match('/^([+-~])([a-z]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
                 throw new Exception('Invalid meta line: ' . $meta);
             }
 
