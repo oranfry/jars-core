@@ -760,7 +760,7 @@ class Jars implements contract\Client
 
         // TODO: This assumes we never interact with past dir via Filesystem class, so implement Filesystem::find() instead
 
-        foreach (explode("\n", `test -d "$past_dir" && find "$past_dir" -type f || true`) as $pastfile) {
+        foreach (array_filter(explode("\n", `test -d "$past_dir" && find "$past_dir" -type f || true` ?? '')) as $pastfile) {
             $this->filesystem->put($pastfile, null);
         };
 
