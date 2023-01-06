@@ -1011,6 +1011,38 @@ class Linetype
         };
     }
 
+    protected function simple_latitude(string $name)
+    {
+        $this->fields[$name] = $this->df_latitude($name);
+        $this->unfuse_fields[$name] = $this->du_latitude($name);
+    }
+
+    protected function df_latitude(string $name)
+    {
+        return fn ($records) : ?float => $records['/']->$name;
+    }
+
+    protected function du_latitude(string $name)
+    {
+        return fn ($line, $oldline) : ?float => is_numeric(@$line->$name) ? min(90, max(-90, (float) $line->$name)) : null;
+    }
+
+    protected function simple_longitude(string $name)
+    {
+        $this->fields[$name] = $this->df_longitude($name);
+        $this->unfuse_fields[$name] = $this->du_longitude($name);
+    }
+
+    protected function df_longitude(string $name)
+    {
+        return fn ($records) : ?float => $records['/']->$name;
+    }
+
+    protected function du_longitude(string $name)
+    {
+        return fn ($line, $oldline) : ?float => is_numeric(@$line->$name) ? -(fmod((-min(180, max(-180, (float) $line->$name)) + 180), 360) - 180) : null;
+    }
+
     protected function literal(string $name, $value)
     {
         if (is_null($value)) {
