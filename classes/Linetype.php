@@ -12,6 +12,7 @@ class Linetype
     public $completions = [];
     public $fields = [];
     public $inlinelinks = [];
+    public $name;
     public $table;
     public $unfuse_fields = [];
     public $validations = [];
@@ -201,7 +202,7 @@ class Linetype
             }
 
             if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
-                throw new Exception('Parent does not exist');
+                throw new Exception('Parent [' . $parent_id . '] does not exist');
             }
 
             $line->$alias = $parent_id;

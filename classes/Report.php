@@ -10,8 +10,10 @@ abstract class Report
 
     protected $filesystem;
     protected $jars;
-
+    public $classify;
     public $listen = [];
+    public $name;
+    public $sorter;
 
     public function delegate_handling($token, $table, $record, $oldrecord, $oldlinks) : void
     {

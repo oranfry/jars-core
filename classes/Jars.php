@@ -231,6 +231,7 @@ class Jars implements contract\Client
                 case 'save':
                     $affected->record->save();
                     $meta[] = ($affected->oldrecord ? '~' : '+') . $affected->table . ':' . $affected->id;
+
                     break;
 
                 default:
@@ -360,7 +361,6 @@ class Jars implements contract\Client
         $sequence = $this->config()->sequence;
 
         $banned = @$sequence->banned_chars ?? [];
-        $replace = array_fill(0, count($banned), '');
         $sequence_secret = @$sequence->secret;
         $subs = @$sequence->subs ?? [];
 
@@ -376,7 +376,7 @@ class Jars implements contract\Client
             return $subs[$n];
         }
 
-        $id = substr(str_replace($banned, $replace, base64_encode(hex2bin(hash('sha256', $n . '--' . $sequence_secret)))), 0, $sequence->size ?? 12);
+        $id = substr(str_replace($banned, '', base64_encode(hex2bin(hash('sha256', $n . '--' . $sequence_secret)))), 0, $sequence->size ?? 12);
 
         if (isset($sequence->transform)) {
             $id = call_user_func($sequence->transform, $id);
@@ -750,7 +750,7 @@ class Jars implements contract\Client
                     if ($current_groups) {
                         $this->filesystem->put($groups_file, json_encode(['groups' => $current_groups]));
                     } elseif ($this->filesystem->has($groups_file)) {
-                        unlink($groups_file);
+                        $this->filesystem->delete($groups_file);
                     }
                 }
             }

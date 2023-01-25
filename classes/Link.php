@@ -9,6 +9,7 @@ class Link
     private $id;
     private $jars;
     private $name;
+    private $reverse;
     private $version;
 
     public function __construct(Jars $jars, string $name, string $id, ?bool $reverse = null, ?string $version = null)

@@ -10,10 +10,11 @@ class Filesystem
     public const READ_ONLY = 1 << 1;
     public const AUTO_PERSIST = 1 << 2;
 
+    private $auto_persist;
+    private $donefile = null;
     private $no_persist;
     private $read_only;
     private $store = [];
-    private $donefile = null;
 
     public function __construct($options = self::AUTO_PERSIST)
     {
