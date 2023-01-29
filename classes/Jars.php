@@ -10,6 +10,7 @@ class Jars implements contract\Client
     private $filesystem;
     private $head;
     private $known = [];
+    private $listeners = [];
     private $portal_home;
     private $token;
     private $verified_tokens = [];
@@ -252,6 +253,8 @@ class Jars implements contract\Client
                 $this->filesystem->persist();
             }
         }
+
+        $this->trigger('entryimported');
 
         return $updated;
     }
@@ -549,6 +552,8 @@ class Jars implements contract\Client
     {
         $pointer_file = $this->db_home . '/pointer.dat';
         $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
+
+        $this->trigger('takeanumber', $pointer, $id);
         $this->filesystem->put($pointer_file, $pointer + 1);
 
         return $id;
@@ -985,5 +990,31 @@ class Jars implements contract\Client
         }
 
         return $dredged;
+    }
+
+    public function listen(Listener $listener): void
+    {
+        $this->listeners[] = $listener;
+    }
+
+    public function trigger(string $event, ...$arguments): void
+    {
+        if (!preg_match('/[a-z]+/', $event)) {
+            error_response('invalid event name');
+        }
+
+        $eventinterface = 'jars\\events\\' . $event;
+
+        if (!interface_exists($eventinterface)) {
+            error_response('no such event [' . $event . ']');
+        }
+
+        foreach ($this->listeners as $listener) {
+            if (is_subclass_of($listener, $eventinterface)) {
+                $method = 'handle_' . $event;
+
+                $listener->$method(...$arguments);
+            }
+        }
     }
 }

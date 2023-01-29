@@ -213,6 +213,8 @@ class Linetype
 
     public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
     {
+        $this->jars->trigger('importline', $this->table);
+
         $tableinfo = @$this->jars->config()->tables[$this->table] ?? (object) [];
         $oldline = null;
         $oldrecord = null;
