@@ -360,10 +360,10 @@ class Jars implements contract\Client
 
     public function n2h($n)
     {
-        // Generate a sequence secret: php -r 'echo base64_encode(random_bytes(32)) . "\n";'
+        // Generate a sequence secret: php -r 'echo base64_encode(random_bytes(33)) . "\n";'
         $sequence = $this->config()->sequence;
 
-        $banned = @$sequence->banned_chars ?? [];
+        $banned = array_unique(array_merge(@$sequence->banned_chars ?? [], ['+', '/', '=']));
         $sequence_secret = @$sequence->secret;
         $subs = @$sequence->subs ?? [];
 
