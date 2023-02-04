@@ -363,7 +363,7 @@ class Linetype
         if ($logging !== null) {
             $verb = @$line->_is === false ? '-' : (@$line->given_id ? '~' : '+');
             echo str_repeat(' ', $logging * 4);
-            echo $verb . '[' . $line->type . ':' . $line->id . ']';
+            echo $verb . '[' . $this->table . ':' . $line->id . ']';
             echo "\n";
         }
 
