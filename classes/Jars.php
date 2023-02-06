@@ -715,12 +715,10 @@ class Jars implements contract\Client
 
                         $this->load_children_r($line, @$listen->children ?? [], $childsets);
 
-                        if (property_exists($listen, 'classify')) {
+                        if (property_exists($listen, 'classify') && $listen->classify) {
                             $current_groups = static::classifier_value($listen->classify, $line);
-                        } elseif (property_exists($report, 'classify')) {
+                        } elseif (property_exists($report, 'classify') && $report->classify) {
                             $current_groups = static::classifier_value($report->classify, $line);
-                        } elseif (property_exists($line, '_groups') && is_string($line->_group)) {
-                            $current_groups = explode(',', $line->_groups);
                         } else {
                             $current_groups = ['all'];
                         }
