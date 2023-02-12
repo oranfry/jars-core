@@ -149,7 +149,7 @@ class Jars implements contract\Client
             ||
             $line->ttl + $line->used < time()
         ) {
-            usleep((0.5 + $time - microtime(true)) * 1000000); // don't let on whether the line existed
+            usleep(floor((0.5 + $time - microtime(true)) * 1000000)); // don't let on whether the line existed
 
             return false;
         }
@@ -196,7 +196,7 @@ class Jars implements contract\Client
         $lines = $this->import_r($original_filesystem, $timestamp, $lines, $affecteds, $commits, null, $logging);
         $meta  = [];
 
-        if (!$dryrun && file_exists($current_version_file = $this->db_home . '/version.dat')) {
+        if (!$dryrun && file_exists($current_version_file = $this->db_home . '/version.dat') && !file_exists("{$this->db_home}/past")) {
             $version = trim(file_get_contents($current_version_file));
 
             `mkdir -p "{$this->db_home}/past" && cp -r "{$this->db_home}/current" "{$this->db_home}/past/$version"`;
