@@ -1043,6 +1043,37 @@ class Linetype
         return fn ($line, $oldline) : ?float => is_numeric(@$line->$name) ? -(fmod((-min(180, max(-180, (float) $line->$name)) + 180), 360) - 180) : null;
     }
 
+    protected function simple_floats()
+    {
+        foreach (func_get_args() as $name) {
+            $this->simple_float($name);
+        }
+    }
+
+    protected function simple_float(string $name)
+    {
+        $this->fields[$name] = $this->df_float($name);
+        $this->unfuse_fields[$name] = $this->du_float($name);
+    }
+
+    protected function df_float(string $name)
+    {
+        return function($records) use ($name) : ?float {
+            return $records['/']->{$name};
+        };
+    }
+
+    protected function du_float(string $name)
+    {
+        return function($line, $oldline) use ($name) : ?float {
+            if (!is_numeric(@$line->{$name})) {
+                return null;
+            }
+
+            return (float) $line->{$name};
+        };
+    }
+
     protected function literal(string $name, $value)
     {
         if (is_null($value)) {
