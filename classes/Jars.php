@@ -630,7 +630,7 @@ class Jars implements contract\Client
             $greyhound_number = (int) $this->filesystem->get($this->db_path('versions/' . $greyhound));
         }
 
-        if ($bunny == $greyhound) {
+        if ($greyhound && $bunny == $greyhound) {
             return $greyhound;
         }
 
