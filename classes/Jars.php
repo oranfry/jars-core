@@ -511,7 +511,6 @@ class Jars implements contract\Client
             $linetype->name = $name;
 
             $linetype->jars($this);
-            $linetype->filesystem($this->filesystem());
 
             if (method_exists($linetype, 'init')) {
                 $linetype->init($token);

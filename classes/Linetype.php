@@ -1181,22 +1181,4 @@ class Linetype
 
         return $this->jars;
     }
-
-    public function filesystem()
-    {
-        if (func_num_args()) {
-            $filesystem = func_get_arg(0);
-
-            if (!($filesystem instanceof Filesystem)) {
-                throw new Exception(__METHOD__ . ': argument should be instance of Filesystem');
-            }
-
-            $prev = $this->filesystem;
-            $this->filesystem = $filesystem;
-
-            return $prev;
-        }
-
-        return $this->filesystem;
-    }
 }
