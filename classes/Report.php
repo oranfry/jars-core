@@ -24,10 +24,10 @@ abstract class Report
         $this->{"handle_" . $table}($token, $record, $oldrecord, $oldlinks);
     }
 
-    public function delete(string $group, string $id)
+    public function delete(string $group, string $linetype, string $id)
     {
-        return $this->manip($group, function($report) use ($id) {
-            if (($key = array_search($id, array_map(fn ($line) => $line->id, $report))) !== false) {
+        return $this->manip($group, function($report) use ($id, $linetype) {
+            if (($key = array_search($id, array_map(fn ($line) => $line->id, $report))) !== false && $report[$key]->type === $linetype) {
                 unset($report[$key]);
             }
 

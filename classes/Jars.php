@@ -740,7 +740,7 @@ class Jars implements contract\Client
                     }
 
                     foreach (array_diff($past_groups, $current_groups) as $group) {
-                        $report->delete($group, $id);
+                        $report->delete($group, $linetype, $id);
                     }
 
                     // upsert
