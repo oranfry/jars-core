@@ -18,7 +18,6 @@ class Linetype
     public $validations = [];
 
     private $jars;
-    private $filesystem;
 
     private static $incoming_inlines = null;
     private static $incoming_links = [];
@@ -225,12 +224,53 @@ class Linetype
             $oldrecord = Record::of($this->jars, $this->table, $line->id);
         }
 
-        if (property_exists($line, '_is') && !$line->_is) { // Remove
+        $is = !property_exists($line, '_is') || $line->_is;
+
+        if ($is) {
+            // Add or Update
+            if (@$line->id) {
+                $oldline = $this->get($token, $line->id, $old_inlines);
+
+                foreach (array_diff(array_keys(get_object_vars($oldline)), ['id', 'type']) as $property) {
+                    if (!property_exists($line, $property)) {
+                        $line->$property = $oldline->$property;
+                    }
+                }
+            }
+
+            $this->complete($line);
+            $errors = $this->validate($line);
+
+            if ($errors) {
+                throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors) . '. ' . var_export($line, 1));
+            }
+
+            if (!@$line->id) { // Add
+                $line->id = $this->jars->takeanumber();
+            }
+
+            $record = $oldrecord ? (clone $oldrecord) : Record::of($this->jars, $this->table);
+
+            if ($oldline === null) {
+                $record->created = $timestamp;
+            }
+
+            $record->id = $line->id;
+
+            $affecteds[] = (object) [
+                'id' => $record->id,
+                'table' => $this->table,
+                'action' => 'save',
+                'record' => $record,
+                'oldrecord' => $oldrecord,
+                'oldlinks' => [],
+            ];
+        } else {
+            // Remove
             if (!@$line->id) {
                 throw new Exception("Missing id for deletion");
             }
 
-            $is = false;
             $oldrecord->assertExistence();
 
             foreach ($this->find_incoming_links() as $parent) {
@@ -264,49 +304,6 @@ class Linetype
                 'table' => $this->table,
                 'action' => 'delete',
                 'record' => null,
-                'oldrecord' => $oldrecord,
-                'oldlinks' => [],
-            ];
-        } else { // Add or Update
-            $is = true;
-
-            if (@$line->id) {
-                $original_jars = clone $this;
-                $original_jars->filesystem($original_filesystem);
-
-                $oldline = $original_jars->get($token, $line->id, $old_inlines);
-
-                foreach (array_diff(array_keys(get_object_vars($oldline)), ['id', 'type']) as $property) {
-                    if (!property_exists($line, $property)) {
-                        $line->$property = $oldline->$property;
-                    }
-                }
-            }
-
-            $this->complete($line);
-            $errors = $this->validate($line);
-
-            if ($errors) {
-                throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors) . '. ' . var_export($line, 1));
-            }
-
-            if (!@$line->id) { // Add
-                $line->id = $this->jars->takeanumber();
-            }
-
-            $record = $oldrecord ? (clone $oldrecord) : Record::of($this->jars, $this->table);
-
-            if ($oldline === null) {
-                $record->created = $timestamp;
-            }
-
-            $record->id = $line->id;
-
-            $affecteds[] = (object) [
-                'id' => $record->id,
-                'table' => $this->table,
-                'action' => 'save',
-                'record' => $record,
                 'oldrecord' => $oldrecord,
                 'oldlinks' => [],
             ];
