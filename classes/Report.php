@@ -153,9 +153,9 @@ abstract class Report
             throw new Exception('No such version');
         }
 
-        $current_version = file_get_contents($this->jars->db_path("reports/version.dat"));
-        $min_version_num = (int) file_get_contents($min_version_file);
-        $current_version_number = (int) file_get_contents($this->jars->db_path('versions/' . $current_version));
+        $current_version = $this->filesystem->get($this->jars->db_path("reports/version.dat"));
+        $min_version_num = (int) $this->filesystem->get($min_version_file);
+        $current_version_number = (int) $this->filesystem->get($this->jars->db_path('versions/' . $current_version));
 
         if ($current_version_number >= $min_version_num) {
             return true;
