@@ -695,14 +695,6 @@ class Linetype
 
         unset($line->given_id);
 
-        // strip nulls
-
-        foreach (array_keys(get_object_vars($line)) as $var) {
-            if (is_null($line->$var)) {
-                unset($line->$var);
-            }
-        }
-
         // strip non-scalars that aren't child sets or specials
 
         $keep = ['_adopt', '_disown'];
