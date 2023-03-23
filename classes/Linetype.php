@@ -700,7 +700,7 @@ class Linetype
         $keep = ['_adopt', '_disown'];
 
         foreach (array_keys(get_object_vars($line)) as $var) {
-            if (!is_scalar($line->$var) && !in_array($var, $keep)) {
+            if ($line->$var !== null && !is_scalar($line->$var) && !in_array($var, $keep)) {
                 unset($line->$var);
             }
         }
