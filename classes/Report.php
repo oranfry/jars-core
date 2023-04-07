@@ -145,7 +145,7 @@ abstract class Report
         }, []);
     }
 
-    private function version_requirement_met(string $min_version, int $micro_delay = 0)
+    private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])
     {
         $min_version_file = $this->jars->db_path('versions/' . $min_version);
 
@@ -153,12 +153,12 @@ abstract class Report
             throw new Exception('No such version');
         }
 
-        $current_version = $this->filesystem->get($version_file = $this->jars->db_path("reports/version.dat"));
+        $current_version = $feedback['current_version'] = $this->filesystem->get($version_file = $this->jars->db_path("reports/version.dat"));
 
-        $this->filesystem->revert($version_file);
+        $this->filesystem->forget($version_file);
 
-        $min_version_num = (int) $this->filesystem->get($min_version_file);
-        $current_version_number = (int) $this->filesystem->get($this->jars->db_path('versions/' . $current_version));
+        $min_version_num = $feedback['min_version_num'] = (int) $this->filesystem->get($min_version_file);
+        $current_version_number = $feedback['current_version_number'] = (int) $this->filesystem->get($this->jars->db_path('versions/' . $current_version));
 
         if ($current_version_number >= $min_version_num) {
             return true;
@@ -191,14 +191,12 @@ abstract class Report
         ];
 
         foreach ($tries as $try) {
-            if ($met = $this->version_requirement_met($min_version, $try)) {
-                break;
+            if ($this->version_requirement_met($min_version, $try, $feedback)) {
+                return;
             }
         }
 
-        if (!$met) {
-            throw new Exception('Version Timeout');
-        }
+        throw new Exception("Version timeout waiting for [$min_version]; still at $feedback[current_version]");
     }
 
     public function jars()

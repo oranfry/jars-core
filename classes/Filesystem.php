@@ -151,6 +151,15 @@ class Filesystem
         return $this;
     }
 
+    public function forget(string $file): object
+    {
+        if (!@$this->store[$file]->dirty) {
+            unset($this->store[$file]);
+        }
+
+        return $this;
+    }
+
     public function freeze()
     {
         $this->auto_persist = false;
