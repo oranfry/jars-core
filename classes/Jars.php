@@ -680,6 +680,8 @@ class Jars implements contract\Client
             }
         }
 
+        $changed_reports = [];
+
         foreach (array_keys($this->config()->reports) as $report_name) {
             $report = $this->report($report_name);
 
@@ -688,6 +690,10 @@ class Jars implements contract\Client
                     if (is_numeric($linetype)) {
                         $linetype = $listen;
                         $listen = (object) [];
+                    }
+
+                    if (preg_match('/^report:/', $linetype)) {
+                        continue;
                     }
 
                     $table = $this->linetype($linetype)->table;
@@ -754,6 +760,10 @@ class Jars implements contract\Client
                     } elseif ($this->filesystem->has($groups_file)) {
                         $this->filesystem->delete($groups_file);
                     }
+
+                    foreach (array_merge(array_diff($past_groups, $current_groups), array_diff($current_groups, $past_groups)) as $group) {
+                        $changed_reports[$report_name][$group] = true;
+                    }
                 }
             }
         }
@@ -768,7 +778,78 @@ class Jars implements contract\Client
 
         $this->filesystem->put($greyhound_file, $bunny); // the greyhound has caught the bunny!
 
+        $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
+
         return $bunny;
+    }
+
+    public function refresh_derived(array $changed, string $version, array &$cache = []): void
+    {
+        $new_changed = [];
+
+        foreach (array_keys($this->config()->reports) as $derived_reportname) {
+            $derived_report = $this->report($derived_reportname);
+
+            foreach ($changed as $change_report_group) {
+                [$change_reportname, $change_groupname] = explode('/', $change_report_group, 2);
+
+                foreach ($derived_report->listen as $base_report => $listen) {
+                    if (is_numeric($base_report)) {
+                        $base_report = $listen;
+                        $listen = (object) [];
+                    }
+
+                    if (!preg_match('/^report:(.*)/', $base_report, $groups)) {
+                        continue;
+                    }
+
+                    $base_report = $groups[1];
+
+                    if ($base_report !== $change_reportname) {
+                        continue;
+                    }
+
+                    if (property_exists($listen, 'classify') && $listen->classify) {
+                        $derived_groupname = @static::classifier_value($listen->classify, $change_groupname)[0];
+                    } elseif (property_exists($derived_report, 'classify') && $derived_report->classify) {
+                        $derived_groupname = @static::classifier_value($derived_report->classify, $change_groupname)[0];
+                    } else {
+                        $derived_groupname = 'all';
+                    }
+
+                    $derived_group = $derived_report->handle(
+                        $this->group($change_reportname, $change_groupname, $version),
+                        $cache[$derived_reportname][$derived_groupname] ?? $this->group($derived_reportname, $derived_groupname),
+                        $change_reportname,
+                        $change_groupname,
+                    );
+
+                    $new_changed[] = $derived_reportname . '/' . $derived_groupname;
+
+                    $cache[$derived_reportname][$derived_groupname] = &$derived_group;
+
+                    $this->filesystem->put(
+                        $this->db_path("reports/$derived_reportname/$derived_groupname.json"),
+                        json_encode($derived_group),
+                    );
+
+                    $groups_file = $this->db_path("reports/$derived_reportname/groups.json");
+                    $groups = json_decode($this->filesystem->get($groups_file) ?? '[]');
+
+                    if (!in_array($derived_groupname, $groups)) {
+                        $groups[] = $derived_groupname;
+
+                        sort($groups);
+
+                        $this->filesystem->put($groups_file, json_encode($groups));
+                    }
+                }
+            }
+        }
+
+        if ($new_changed) {
+            $this->refresh_derived($new_changed, $version, $cache);
+        }
     }
 
     private static function classifier_value($classify, $line) {
@@ -942,10 +1023,10 @@ class Jars implements contract\Client
             $names = [];
 
             foreach ($this->report($report)->listen as $key => $value) {
-                if (is_string($value)) {
-                    $names[] = $value;
-                } else {
-                    $names[] = $key;
+                $name = is_string($value) ? $value : $key;
+
+                if (!preg_match('/^report:/', $name)) {
+                    $names[] = $name;
                 }
             }
         } else {
@@ -1013,5 +1094,20 @@ class Jars implements contract\Client
                 $listener->$method(...$arguments);
             }
         }
+    }
+
+    private static function array_keys_recursive(array $array, string $separtor = '/')
+    {
+        $keys = [];
+
+        foreach ($array as $key => $element) {
+            if (is_array($element)) {
+                $keys = array_merge($keys, array_map(fn ($subkey) => $key . $separtor . $subkey, static::array_keys_recursive($element, $separtor)));
+            } else {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
     }
 }

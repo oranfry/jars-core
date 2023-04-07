@@ -81,8 +81,25 @@ abstract class Report
         return $this->filesystem->has($this->file($group));
     }
 
+    public function is_derived(): bool
+    {
+        foreach ($this->listen as $key => $value) {
+            $linetype = is_numeric($key) ? $value : $key;
+
+            if (preg_match('/^report:/', $linetype)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function linetypes()
     {
+        if ($this->is_derived()) {
+            return [];
+        }
+
         $linetypes = [];
 
         foreach ($this->listen as $key => $value) {

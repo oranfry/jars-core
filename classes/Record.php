@@ -87,6 +87,11 @@ class Record
         }
     }
 
+    public function __toString(): string
+    {
+        return $this->export();
+    }
+
     private function export()
     {
         if ($this->format == 'binary') {
