@@ -137,9 +137,16 @@ class Filesystem
         return $this;
     }
 
-    public function revert() : object
+    public function reset(): object
     {
         $this->store = [];
+
+        return $this;
+    }
+
+    public function revert(string $file): object
+    {
+        unset($this->store[$file]);
 
         return $this;
     }

@@ -243,7 +243,7 @@ class Jars implements contract\Client
         $updated = $this->dredge_r($lines);
 
         if ($dryrun) {
-            $this->filesystem->revert();
+            $this->filesystem->reset();
         } else {
             $commits = array_filter($commits);
 
