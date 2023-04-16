@@ -1204,4 +1204,13 @@ class Linetype
 
         return $this->jars;
     }
+
+    public function null_empty(object $line, ...$fields)
+    {
+        foreach ($fields as $field) {
+            if (!@$line->$field) {
+                $line->field = null;
+            }
+        }
+    }
 }
