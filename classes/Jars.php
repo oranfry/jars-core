@@ -810,45 +810,58 @@ class Jars implements contract\Client
                     }
 
                     if (property_exists($listen, 'classify') && $listen->classify) {
-                        $derived_groupname = @static::classifier_value($listen->classify, $change_groupname)[0];
+                        $derived_groupnames = @static::classifier_value($listen->classify, $change_groupname);
                     } elseif (property_exists($derived_report, 'classify') && $derived_report->classify) {
-                        $derived_groupname = @static::classifier_value($derived_report->classify, $change_groupname)[0];
+                        $derived_groupnames = @static::classifier_value($derived_report->classify, $change_groupname);
                     } else {
-                        $derived_groupname = 'all';
+                        $derived_groupnames = ['all'];
                     }
 
-                    $derived_group = $derived_report->handle(
-                        $this->group($change_reportname, $change_groupname, $version),
-                        $cache[$derived_reportname][$derived_groupname] ?? $this->group($derived_reportname, $derived_groupname),
-                        $change_reportname,
-                        $change_groupname,
-                    );
+                    foreach ($derived_groupnames as $derived_groupname) {
+                        $cache[$change_reportname][$change_groupname] ??= $this->group($change_reportname, $change_groupname, $version);
+                        $cache[$derived_reportname][$derived_groupname] ??= $this->group($derived_reportname, $derived_groupname);
 
-                    $new_changed[] = $derived_reportname . '/' . $derived_groupname;
+                        $cache[$derived_reportname][$derived_groupname] = $derived_report->handle(
+                            $cache[$change_reportname][$change_groupname],
+                            $cache[$derived_reportname][$derived_groupname],
+                            $change_reportname,
+                            $change_groupname,
+                        );
 
-                    $cache[$derived_reportname][$derived_groupname] = &$derived_group;
+                        $new_changed[$derived_reportname . '/' . $derived_groupname] = true;
 
-                    $this->filesystem->put(
-                        $this->db_path("reports/$derived_reportname/$derived_groupname.json"),
-                        json_encode($derived_group),
-                    );
+                        $group_file = $this->db_path("reports/$derived_reportname/$derived_groupname.json");
+                        $groups_file = $this->db_path("reports/$derived_reportname/groups.json");
+                        $groups = json_decode($this->filesystem->get($groups_file) ?? '[]');
 
-                    $groups_file = $this->db_path("reports/$derived_reportname/groups.json");
-                    $groups = json_decode($this->filesystem->get($groups_file) ?? '[]');
+                        if ($cache[$derived_reportname][$derived_groupname] === null) {
+                            $this->filesystem->delete($group_file);
 
-                    if (!in_array($derived_groupname, $groups)) {
-                        $groups[] = $derived_groupname;
+                            if (in_array($derived_groupname, $groups)) {
+                                $groups = array_values(array_diff($groups, [$derived_groupname]));
+                            }
+                        } else {
+                            $this->filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname]));
 
-                        sort($groups);
+                            if (!in_array($derived_groupname, $groups)) {
+                                $groups[] = $derived_groupname;
 
-                        $this->filesystem->put($groups_file, json_encode($groups));
+                                sort($groups);
+                            }
+                        }
+
+                        if ($groups) {
+                            $this->filesystem->put($groups_file, json_encode($groups));
+                        } else {
+                            $this->filesystem->delete($groups_file);
+                        }
                     }
                 }
             }
         }
 
         if ($new_changed) {
-            $this->refresh_derived($new_changed, $version, $cache);
+            $this->refresh_derived(array_keys($new_changed), $version, $cache);
         }
     }
 
