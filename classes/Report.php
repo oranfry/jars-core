@@ -148,7 +148,10 @@ abstract class Report
     public function upsert(string $group, object $line, ?callable $sorter = null)
     {
         return $this->manip($group, function ($report) use ($line, $sorter) {
-            if (($key = array_search($line->id, array_map(fn ($line) => $line->id, $report))) !== false) {
+            if (
+                (false !== $key = array_search($line->id, array_map(fn ($line) => $line->id, $report)))
+                && @$report[$key]->type == $line->type
+            ) {
                 $report[$key] = $line;
             } else {
                 $report[] = $line;
