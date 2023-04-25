@@ -123,7 +123,7 @@ class Jars implements contract\Client
     public function verify_token(string $token)
     {
         if (isset($this->verified_tokens[$token])) {
-            return true;
+            return $this->verified_tokens[$token];
         }
 
         if (!preg_match('/^([a-zA-Z0-9]+):([0-9a-f]{64})$/', $token, $groups)) {
@@ -144,10 +144,8 @@ class Jars implements contract\Client
 
         if (
             !$line
-            ||
-            $line->token !== $random_bits
-            ||
-            $line->ttl + $line->used < time()
+            || $line->token !== $random_bits
+            || $line->ttl + $line->used < time()
         ) {
             usleep(floor((0.5 + $time - microtime(true)) * 1000000)); // don't let on whether the line existed
 
@@ -167,6 +165,7 @@ class Jars implements contract\Client
         }
 
         $token_object = (object) [
+            'id' => $line->id,
             'token' => $line->token,
             'user' => @$user->id,
             'username' => @$user->username ?? $this->config()->root_username
@@ -174,17 +173,20 @@ class Jars implements contract\Client
 
         $this->verified_tokens[$token] = $token_object;
 
-        return true;
+        return $token_object;
     }
 
     public function logout()
     {
-        if (!$this->verify_token($this->token)) {
+        if (!$line = $this->verify_token($this->token)) {
             return;
         }
 
-        $line = (object)['token' => $this->token, 'type' => 'token', '_is' => false];
-        $this->import(date('Y-m-d H:i:s'), [$line]);
+        $this->save([(object)[
+            'id' => $line->id,
+            'type' => 'token',
+            '_is' => false,
+        ]]);
     }
 
     public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null)
