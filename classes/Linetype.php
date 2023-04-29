@@ -779,15 +779,14 @@ class Linetype
     public function fieldInfo()
     {
         $newline_fields = @$this->jars->config()->respect_newline_fields[$this->name] ?? [];
+        $float_dp = @$this->jars->config()->float_dp[$this->name] ?? [];
 
-        $fields = [
-            (object) [
-                'name' => 'id',
-                'src' => 'builtin',
-                'type' => 'string',
-                'multiline' => false,
-            ],
-        ];
+        $fields = [(object) [
+            'name' => 'id',
+            'src' => 'builtin',
+            'type' => 'string',
+            'multiline' => false,
+        ]];
 
         foreach (array_filter(array_map(fn ($link) => @$link->only_parent, $this->find_incoming_links())) as $parent_field) {
             $fields[] = (object) [
@@ -803,12 +802,16 @@ class Linetype
                 $fieldTypeObject = (new ReflectionFunction($callback))->getReturnType();
                 $fieldType = ($fieldTypeObject ? $fieldTypeObject->getName() : 'string');
 
-                $fields[] = (object) [
+                $fields[] = $field = (object) [
                     'name' => $name,
                     'src' => $src,
                     'type' => $fieldType,
                     'multiline' => in_array($name, $newline_fields),
                 ];
+
+                if ($fieldType == 'float') {
+                    $field->dp = $float_dp[$name] ?? 0;
+                }
             }
         }
 

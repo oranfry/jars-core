@@ -6,7 +6,7 @@ trait simple_fields
 {
     protected function simple_enum($name, $allowed, $default = null)
     {
-        $this->fields[$name] = function ($records) use ($name, $allowed) : string {
+        $this->fields[$name] = function ($records) use ($name, $allowed): string {
             if (null === $as_string = @$allowed[$records['/']->$name]) {
                 throw new Exception('Could not fuse enum "' . $this->name . '->' . $name . '" with value "' . @$records['/']->$name . '". Expected one of [' . implode(', ', array_map(fn ($v) => '"' . $v . '"', $allowed)) . ']');
             }
@@ -14,7 +14,7 @@ trait simple_fields
             return $as_string;
         };
 
-        $this->unfuse_fields[$name] = function ($line, $oldline) use ($name, $allowed) : int {
+        $this->unfuse_fields[$name] = function ($line, $oldline) use ($name, $allowed): int {
             if (($as_int = @array_flip($allowed)[$line->$name]) === null) {
                 throw new Exception('Could not unfuse enum ' . $name);
             }
@@ -22,7 +22,7 @@ trait simple_fields
             return $as_int;
         };
 
-        $this->validations[] = function ($line) use ($name, $allowed) : ?string {
+        $this->validations[] = function ($line) use ($name, $allowed): ?string {
             if (!in_array($line->$name, $allowed)) {
                 return 'invalid ' . $name;
             }
@@ -46,7 +46,7 @@ trait simple_fields
 
     protected function simple_enum_multi(string $name, array $allowed, ?string $default = null)
     {
-        $this->fields[$name] = function ($records) use ($name, $allowed) : string {
+        $this->fields[$name] = function ($records) use ($name, $allowed): string {
             $values = [];
 
             foreach ($allowed as $i => $allowed_value) {
@@ -58,7 +58,7 @@ trait simple_fields
             return implode(',', $values);
         };
 
-        $this->unfuse_fields[$name] = function ($line, $oldline) use ($name, $allowed) : int {
+        $this->unfuse_fields[$name] = function ($line, $oldline) use ($name, $allowed): int {
             $as_int = 0;
             $values = $line->$name ? explode(',', $line->$name) : [];
 
@@ -71,7 +71,7 @@ trait simple_fields
             return $as_int;
         };
 
-        $this->validations[] = function ($line) use ($name, $allowed) : ?string {
+        $this->validations[] = function ($line) use ($name, $allowed): ?string {
             $values = $line->$name ? explode(',', $line->$name) : [];
 
             foreach ($values as $value) {
@@ -151,7 +151,7 @@ trait simple_fields
 
     protected function df_hex(string $name)
     {
-        return function($records) use ($name) : ?string {
+        return function($records) use ($name): ?string {
             if (!$base64 = $records['/']->{$name}) {
                 return null;
             }
@@ -162,7 +162,7 @@ trait simple_fields
 
     protected function du_hex(string $name)
     {
-        return function($line, $oldline) use ($name) : ?string {
+        return function($line, $oldline) use ($name): ?string {
             if (false === $bin = @hex2bin(@$line->{$name})) {
                 return null;
             }
@@ -173,14 +173,14 @@ trait simple_fields
 
     protected function df_int(string $name)
     {
-        return function($records) use ($name) : ?int {
+        return function($records) use ($name): ?int {
             return $records['/']->{$name};
         };
     }
 
     protected function du_int(string $name)
     {
-        return function($line, $oldline) use ($name) : ?int {
+        return function($line, $oldline) use ($name): ?int {
             if (!is_numeric(@$line->{$name})) {
                 return null;
             }
@@ -210,14 +210,14 @@ trait simple_fields
 
     protected function df_string(string $name)
     {
-        return function($records) use ($name) : ?string {
+        return function($records) use ($name): ?string {
             return $records['/']->{$name};
         };
     }
 
     protected function du_string(string $name)
     {
-        return function($line, $oldline) use ($name) : ?string {
+        return function($line, $oldline) use ($name): ?string {
             return @$line->{$name};
         };
     }
@@ -243,14 +243,14 @@ trait simple_fields
 
     protected function df_boolean(string $name)
     {
-        return function($records) use ($name) : ?bool {
+        return function($records) use ($name): ?bool {
             return @$records['/']->{$name};
         };
     }
 
     protected function du_boolean(string $name)
     {
-        return function($line, $oldline) use ($name) : ?bool {
+        return function($line, $oldline) use ($name): ?bool {
             return (bool) @$line->{$name};
         };
     }
@@ -263,12 +263,12 @@ trait simple_fields
 
     protected function df_latitude(string $name)
     {
-        return fn ($records) : ?float => $records['/']->$name;
+        return fn ($records): ?float => $records['/']->$name;
     }
 
     protected function du_latitude(string $name)
     {
-        return fn ($line, $oldline) : ?float => is_numeric(@$line->$name) ? min(90, max(-90, (float) $line->$name)) : null;
+        return fn ($line, $oldline): ?float => is_numeric(@$line->$name) ? min(90, max(-90, (float) $line->$name)) : null;
     }
 
     protected function simple_longitude(string $name)
@@ -279,12 +279,12 @@ trait simple_fields
 
     protected function df_longitude(string $name)
     {
-        return fn ($records) : ?float => $records['/']->$name;
+        return fn ($records): ?float => $records['/']->$name;
     }
 
     protected function du_longitude(string $name)
     {
-        return fn ($line, $oldline) : ?float => is_numeric(@$line->$name) ? -(fmod((-min(180, max(-180, (float) $line->$name)) + 180), 360) - 180) : null;
+        return fn ($line, $oldline): ?float => is_numeric(@$line->$name) ? -(fmod((-min(180, max(-180, (float) $line->$name)) + 180), 360) - 180) : null;
     }
 
     protected function simple_float(string $name, int $dp = 2)
@@ -297,32 +297,14 @@ trait simple_fields
             error_response('Max DP is 48');
         }
 
-        $this->fields[$name] = fn ($records) : string => bcadd('0', $records['/']->$name ?? '0', $dp);
-        $this->unfuse_fields[$name] = fn ($line) : string => bcadd('0', $line->$name ?? '0', $dp);
-    }
-
-    protected function df_float(string $name)
-    {
-        return function($records) use ($name) : ?float {
-            return $records['/']->{$name};
-        };
-    }
-
-    protected function du_float(string $name)
-    {
-        return function($line, $oldline) use ($name) : ?float {
-            if (!is_numeric(@$line->{$name})) {
-                return null;
-            }
-
-            return (float) $line->{$name};
-        };
+        $this->fields[$name] = fn ($records): float => (float) bcadd('0', $records['/']->$name ?? '0', $dp);
+        $this->unfuse_fields[$name] = fn ($line): string => bcadd('0', (string) ($line->$name ?? 0), $dp);
     }
 
     protected function literal(string $name, $value)
     {
         if (is_null($value)) {
-            $this->fields[$name] = function($records) use ($value) : ?string {
+            $this->fields[$name] = function($records) use ($value): ?string {
                 return null;
             };
 
@@ -330,7 +312,7 @@ trait simple_fields
         }
 
         if (is_string($value)) {
-            $this->fields[$name] = function($records) use ($value) : string {
+            $this->fields[$name] = function($records) use ($value): string {
                 return $value;
             };
 
@@ -338,7 +320,7 @@ trait simple_fields
         }
 
         if (is_bool($value)) {
-            $this->fields[$name] = function($records) use ($value) : bool {
+            $this->fields[$name] = function($records) use ($value): bool {
                 return $value;
             };
 
@@ -346,7 +328,7 @@ trait simple_fields
         }
 
         if (is_int($value)) {
-            $this->fields[$name] = function($records) use ($value) : int {
+            $this->fields[$name] = function($records) use ($value): int {
                 return $value;
             };
 
@@ -354,7 +336,7 @@ trait simple_fields
         }
 
         if (is_float($value)) {
-            $this->fields[$name] = function($records) use ($value) : float {
+            $this->fields[$name] = function($records) use ($value): float {
                 return $value;
             };
 
