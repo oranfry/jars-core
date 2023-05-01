@@ -660,11 +660,11 @@ class Jars implements contract\Client
                 throw new Exception('Invalid meta line: ' . $meta);
             }
 
-            list(, $sign, $type, $id) = $matches;
+            [, $sign, $table, $id] = $matches;
 
             if (!isset($changes[$id])) {
                 $changes[$id] = (object) [
-                    'type' => $type,
+                    'table' => $table,
                 ];
             }
 
@@ -678,7 +678,7 @@ class Jars implements contract\Client
 
         if ($greyhound) {
             foreach ($changes as $id => $change) {
-                $this->propagate_r($change->type, $id, $greyhound, $changes);
+                $this->propagate_r($change->table, $id, $greyhound, $changes);
             }
         }
 
@@ -698,9 +698,7 @@ class Jars implements contract\Client
                         continue;
                     }
 
-                    $table = $this->linetype($linetype)->table;
-
-                    if ($change->type != $table) {
+                    if ($change->table != $this->linetype($linetype)->table) {
                         continue;
                     }
 
@@ -953,43 +951,43 @@ class Jars implements contract\Client
         }
     }
 
-    private function propagate_r(string $linetype, string $id, string $version, array &$changes = [], array &$seen = [])
+    private function propagate_r(string $table, string $id, string $version, array &$changes = [], array &$seen = [])
     {
-        $linetype = $this->linetype($linetype);
+        foreach ($this->fine_table_linetypes($table) as $linetype) {
+            $relatives = array_merge(
+                $linetype->find_incoming_links(),
+                $linetype->find_incoming_inlines(),
+            );
 
-        $relatives = array_merge(
-            $linetype->find_incoming_links(),
-            $linetype->find_incoming_inlines(),
-        );
+            foreach ($relatives as $relative) {
+                $links = [
+                    Link::of($this, $relative->tablelink, $id, !@$relative->reverse, $version),
+                    Link::of($this, $relative->tablelink, $id, !@$relative->reverse)
+                ];
 
-        foreach ($relatives as $relative) {
-            $links = [
-                Link::of($this, $relative->tablelink, $id, !@$relative->reverse, $version),
-                Link::of($this, $relative->tablelink, $id, !@$relative->reverse)
-            ];
+                foreach ($links as $link) {
+                    foreach ($link->relatives() as $relative_id) {
+                        $relative_linetype = $this->linetype($relative->parent_linetype);
+                        $table = $relative_linetype->table;
 
-            foreach ($links as $link) {
-                foreach ($link->relatives() as $relative_id) {
-                    $relative_linetype = $this->linetype($relative->parent_linetype);
-                    $table = $relative_linetype->table;
+                        if (!Record::of($this, $table, $relative_id)->exists()) {
+                            continue;
+                        }
 
-                    if (!Record::of($this, $table, $relative_id)->exists()) {
-                        continue;
-                    }
+                        $change = (object) [
+                            'table' => $table,
+                            'sign' => '*',
+                        ];
 
-                    $change = (object) [
-                        'type' => $table,
-                        'sign' => '*',
-                    ];
+                        if (!isset($changes[$relative_id])) {
+                            $changes[$relative_id] = $change;
+                        }
 
-                    if (!isset($changes[$relative_id])) {
-                        $changes[$relative_id] = $change;
-                    }
+                        if (!isset($seen[$key = $relative->parent_linetype . ':' . $relative_id])) {
+                            $seen[$key] = true;
 
-                    if (!isset($seen[$key = $relative->parent_linetype . ':' . $relative_id])) {
-                        $seen[$key] = true;
-
-                        $this->propagate_r($relative->parent_linetype, $relative_id, $version, $changes, $seen);
+                            $this->propagate_r($relative->parent_linetype, $relative_id, $version, $changes, $seen);
+                        }
                     }
                 }
             }
@@ -1124,5 +1122,20 @@ class Jars implements contract\Client
         }
 
         return $keys;
+    }
+
+    public function fine_table_linetypes(string $table)
+    {
+        $found = [];
+
+        foreach (array_keys($this->config()->linetypes) as $linetype_name) {
+            $linetype = $this->linetype($linetype_name);
+
+            if ($linetype->table === $table) {
+                $found[] = $linetype;
+            }
+        }
+
+        return $found;
     }
 }
