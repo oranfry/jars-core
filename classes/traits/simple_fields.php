@@ -4,6 +4,31 @@ namespace jars\traits;
 
 trait simple_fields
 {
+    protected function simple_date(string $name, ?string $default = null)
+    {
+        $this->simple_string($name, $default);
+
+        $this->validations[] = function ($line) use ($name): ?string {
+            if ($line->$name === null) {
+                return null;
+            }
+
+            if (!preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/', $line->$name, $matches)) {
+                return $name . ' is not in expected format of YYYY-MM-DD';
+            }
+
+            $year = (int) $matches[1];
+            $month = (int) $matches[2];
+            $day = (int) $matches[3];
+
+            if (!checkdate($month, $day, $year)) {
+                return $name . ' is not an actual date';
+            }
+
+            return null;
+        };
+    }
+
     protected function simple_enum(string $name, array $allowed, ?string $default = null)
     {
         $this->fields[$name] = function ($records) use ($name, $allowed): string {
