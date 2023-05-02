@@ -4,7 +4,7 @@ namespace jars\traits;
 
 trait simple_fields
 {
-    protected function simple_enum($name, $allowed, $default = null)
+    protected function simple_enum(string $name, array $allowed, ?string $default = null)
     {
         $this->fields[$name] = function ($records) use ($name, $allowed): string {
             if (null === $as_string = @$allowed[$records['/']->$name]) {
@@ -125,6 +125,8 @@ trait simple_fields
 
     protected function simple_hexs()
     {
+        trigger_error('Method ' . static::class . '::' . preg_replace('/.*::/', '', __METHOD__) . '() is deprecated; please use singular version', E_USER_DEPRECATED);
+
         foreach (func_get_args() as $name) {
             $this->simple_hex($name);
         }
@@ -144,6 +146,8 @@ trait simple_fields
 
     protected function simple_ints()
     {
+        trigger_error('Method ' . static::class . '::' . preg_replace('/.*::/', '', __METHOD__) . '() is deprecated; please use singular version', E_USER_DEPRECATED);
+
         foreach (func_get_args() as $name) {
             $this->simple_int($name);
         }
@@ -203,6 +207,8 @@ trait simple_fields
 
     protected function simple_strings()
     {
+        trigger_error('Method ' . static::class . '::' . preg_replace('/.*::/', '', __METHOD__) . '() is deprecated; please use singular version', E_USER_DEPRECATED);
+
         foreach (func_get_args() as $name) {
             $this->simple_string($name);
         }
@@ -236,6 +242,8 @@ trait simple_fields
 
     protected function simple_booleans()
     {
+        trigger_error('Method ' . static::class . '::' . preg_replace('/.*::/', '', __METHOD__) . '() is deprecated; please use singular version', E_USER_DEPRECATED);
+
         foreach (func_get_args() as $name) {
             $this->simple_boolean($name);
         }
