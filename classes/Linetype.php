@@ -402,7 +402,17 @@ class Linetype
                     }
 
                     $discard = [];
-                    $childlines = $this->jars->import_r($original_filesystem, $timestamp, [$childline], $affecteds, $discard, $child->tablelink, $logging !== null ? $logging + 1 : null);
+
+                    $childlines = $this->jars->import_r(
+                        $original_filesystem,
+                        $timestamp,
+                        [$childline],
+                        $affecteds,
+                        $discard,
+                        $child->tablelink,
+                        $logging !== null ? $logging + 1 : null,
+                    );
+
                     $affecteds[] = (object) [
                         'action' => 'connect',
                         'tablelink' => $child->tablelink,
@@ -419,18 +429,18 @@ class Linetype
                 ];
 
                 if (!@$child->orphanable) {
-                    $affecteds[] = (object) [
-                        'action' => 'delete',
-                        'id' => $oldchild->id,
-                        'table' => $child_linetype->table,
-                        'record' => null,
-                        'oldrecord' => $oldchild,
-                        'oldlinks' => [(object) [
-                            'tablelink' => $child->tablelink,
-                            'left' => (@$child->reverse ? $oldchild->id : $line->id),
-                            'right' => (@$child->reverse ? $line->id : $oldchild->id),
-                        ]],
-                    ];
+                    $discard = [];
+
+                    $child_linetype->import(
+                        $token,
+                        $original_filesystem,
+                        $timestamp,
+                        (object) ['id' => $oldchild->id, '_is' => false],
+                        $affecteds,
+                        $discard,
+                        $child->tablelink,
+                        $logging !== null ? $logging + 1 : null,
+                    );
                 }
             }
         }
