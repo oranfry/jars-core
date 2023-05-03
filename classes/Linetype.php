@@ -360,10 +360,9 @@ class Linetype
         }
 
         if ($logging !== null) {
-            $verb = @$line->_is === false ? '-' : (@$line->given_id ? '~' : '+');
-            echo str_repeat(' ', $logging * 4);
-            echo $verb . '[' . $this->table . ':' . $line->id . ']';
-            echo "\n";
+            $verb = !$is ? '-' : (@$line->given_id ? '~' : '+');
+
+            echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
         }
 
         // recurse to inline children

@@ -132,14 +132,14 @@ class Jars implements contract\Client
 
         // token deleted or never existed
 
-        list (, $id, $random_bits) = $groups;
+        [, $id, $random_bits] = $groups;
 
         $time = microtime(true);
 
         $line = null;
 
         try {
-            $line = $this->linetype('token', true)->get(null, $id);
+            $line = $this->linetype('token')->get(null, $id);
         } catch (Exception $e) {}
 
         if (
@@ -276,11 +276,15 @@ class Jars implements contract\Client
         }
 
         foreach ($lines as $line) {
-            $this->linetype($line->type)->import($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
+            $this
+                ->linetype($line->type)
+                ->import($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
         }
 
         foreach ($lines as $line) {
-            $this->linetype($line->type)->recurse_to_children($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
+            $this
+                ->linetype($line->type)
+                ->recurse_to_children($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
         }
 
         return $lines;
