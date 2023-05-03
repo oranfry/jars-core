@@ -486,12 +486,7 @@ class Jars implements contract\Client
             }
 
             if (!in_array('token', array_keys($config->linetypes))) {
-                $config->linetypes['token'] = (object) [
-                    'cancreate' => true,
-                    'canwrite' => true,
-                    'candelete' => true,
-                    'class' => 'jars\\linetype\\token',
-                ];
+                $config->linetypes['token'] = \jars\linetype\token::class;
             }
 
             $this->known['configs'][$this->portal_home] = $config;
@@ -500,10 +495,10 @@ class Jars implements contract\Client
         return $this->known['configs'][$this->portal_home];
     }
 
-    public function linetype(string $name, bool $from_base_config = false)
+    public function linetype(string $name)
     {
         if (!isset($this->known['linetypes'][$name])) {
-            $linetypeclass = $this->config($from_base_config)->linetypes[$name]->class;
+            $linetypeclass = $this->config()->linetypes[$name];
 
             if (!$linetypeclass) {
                 throw new Exception("No such linetype '{$name}'");
