@@ -385,7 +385,7 @@ class Linetype
                 $oldchild->assertExistence();
             }
 
-            if (property_exists($line, $child->property)) { // has
+            if ($is && property_exists($line, $child->property)) { // has
                 $childline = $line->{$child->property};
 
                 if ($childline === 'unchanged' || $childline === 'touch') {
