@@ -8,25 +8,18 @@ class token extends \jars\Linetype
     {
         $this->table = 'token';
 
-        $this->fields = [
-            'token' => fn ($records): string => $records['/']->token,
-            'ttl' => fn ($records): int => $records['/']->ttl,
-            'used' => fn ($records): int => $records['/']->used,
-            'hits' => fn ($records): int => $records['/']->hits,
-            'expired' => fn ($records): bool => strtotime($records['/']->used) + $records['/']->ttl > time(),
-        ];
+        $this->simple_hex('token');
+        $this->simple_int('ttl');
+        $this->simple_int('hits', 0);
 
-        $this->unfuse_fields = [
-            'token' => fn ($line, $oldline): string => $line->token,
-            'ttl' => fn ($line, $oldline): int => $line->ttl,
-            'used' => fn ($line, $oldline): int => time(),
-            'hits' => fn ($line, $oldline): int => @$line->hits ?? 0,
-        ];
+        $this->fields['used'] = fn ($records): int => $records['/']->used;
+        $this->unfuse_fields['used'] = fn ($line, $oldline): int => time();
+
+        $this->fields['expired'] = fn ($records): bool => strtotime($records['/']->used) + $records['/']->ttl > time();
     }
 
-    function complete($line) : void
+    function complete($line): void
     {
-        $line->ttl = @$line->ttl ?? 86400;
-        $line->hits = @$line->hits ?? 0;
+        $line->ttl = $line->ttl ?? 86400;
     }
 }
