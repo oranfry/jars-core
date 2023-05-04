@@ -1090,13 +1090,13 @@ class Jars implements contract\Client
     public function trigger(string $event, ...$arguments): void
     {
         if (!preg_match('/[a-z]+/', $event)) {
-            error_response('invalid event name');
+            throw new Exception('Invalid event name');
         }
 
         $eventinterface = 'jars\\events\\' . $event;
 
         if (!interface_exists($eventinterface)) {
-            error_response('no such event [' . $event . ']');
+            throw new Exception('No such event [' . $event . ']');
         }
 
         foreach ($this->listeners as $listener) {

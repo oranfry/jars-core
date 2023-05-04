@@ -7,8 +7,6 @@ use Exception;
 
 class Linetype
 {
-    use traits\simple_fields;
-
     public $borrow = [];
     public $children = [];
     public $completions = [];
@@ -241,9 +239,8 @@ class Linetype
             }
 
             $this->complete($line);
-            $errors = $this->validate($line);
 
-            if ($errors) {
+            if ($errors = $this->validate($line)) {
                 throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors) . '. ' . var_export($line, 1));
             }
 
@@ -745,7 +742,7 @@ class Linetype
     {
     }
 
-    public function validate($line)
+    public function validate($line): array
     {
         $errors = [];
 
