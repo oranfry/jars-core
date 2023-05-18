@@ -27,7 +27,9 @@ abstract class Report
     public function delete(string $group, string $linetype, string $id)
     {
         return $this->manip($group, function($report) use ($id, $linetype) {
-            if (($key = array_search($id, array_map(fn ($line) => $line->id, $report))) !== false && $report[$key]->type === $linetype) {
+            $key = array_search($linetype . '/' . $id, array_map(fn ($line) => $line->type . '/' . $line->id, $report));
+
+            if ($key !== false) {
                 unset($report[$key]);
             }
 
@@ -148,10 +150,9 @@ abstract class Report
     public function upsert(string $group, object $line, ?callable $sorter = null)
     {
         return $this->manip($group, function ($report) use ($line, $sorter) {
-            if (
-                (false !== $key = array_search($line->id, array_map(fn ($line) => $line->id, $report)))
-                && @$report[$key]->type == $line->type
-            ) {
+            $key = array_search($line->type . '/' . $line->id, array_map(fn ($line) => $line->type . '/' . $line->id, $report));
+
+            if ($key !== false) {
                 $report[$key] = $line;
             } else {
                 $report[] = $line;
