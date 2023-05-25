@@ -120,7 +120,7 @@ class Linetype
         }
     }
 
-    public function delete($id)
+    public function delete($id): array
     {
         $this->save([(object) [
             'id' => $id,
@@ -605,7 +605,7 @@ class Linetype
         }
     }
 
-    public function get_childset($token, string $id, string $property)
+    public function get_childset($token, string $id, string $property): array
     {
         $child = @array_values(array_filter($this->children, fn ($o) => $o->property == $property))[0];
 
@@ -654,7 +654,7 @@ class Linetype
         }
     }
 
-    public function save($lines)
+    public function save($lines): array
     {
         foreach ($lines as $line) {
             if (!@$line->type) {
@@ -782,9 +782,10 @@ class Linetype
         return true;
     }
 
-    public function fieldInfo()
+    public function fieldInfo(): array
     {
         $newline_fields = @$this->jars->config()->respect_newline_fields[$this->name] ?? [];
+        $download_fields = @$this->jars->config()->download_fields[$this->name] ?? [];
         $float_dp = @$this->jars->config()->float_dp[$this->name] ?? [];
 
         $fields = [(object) [
@@ -809,14 +810,22 @@ class Linetype
                 $fieldType = ($fieldTypeObject ? $fieldTypeObject->getName() : 'string');
 
                 $fields[] = $field = (object) [
+                    'downloadable' => false,
+                    'multiline' => in_array($name, $newline_fields),
                     'name' => $name,
                     'src' => $src,
                     'type' => $fieldType,
-                    'multiline' => in_array($name, $newline_fields),
                 ];
 
                 if ($fieldType == 'float') {
                     $field->dp = $float_dp[$name] ?? 0;
+                }
+
+                if ($download = @$download_fields[$name]) {
+                    $field->downloadable = true;
+                    $field->download_extension = @$download->extension;
+                    $field->download_icon = @$download->icon;
+                    $field->download_table = @$download->table;
                 }
             }
         }

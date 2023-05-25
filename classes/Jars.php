@@ -6,9 +6,9 @@ use Exception;
 
 class Jars implements contract\Client
 {
-    private $db_home;
+    private string $db_home;
     private $filesystem;
-    private $head;
+    private ?string $head = null;
     private $known = [];
     private $listeners = [];
     private $portal_home;
@@ -29,31 +29,25 @@ class Jars implements contract\Client
         $this->filesystem = clone $this->filesystem;
     }
 
-    public static function validate_username(string $username)
+    public static function validate_username(string $username): bool
     {
         return
             is_string($username)
-            &&
-            strlen($username) > 0
-            &&
-            (
+            && strlen($username) > 0
+            && (
                 preg_match('/^[a-z0-9_]+$/', $username)
-                ||
-                filter_var($username, FILTER_VALIDATE_EMAIL) !== false
-            )
-            ;
+                || filter_var($username, FILTER_VALIDATE_EMAIL) !== false
+            );
     }
 
-    public static function validate_password(string $password)
+    public static function validate_password(string $password): bool
     {
         return
             is_string($password)
-            &&
-            strlen($password) > 5
-            ;
+            && strlen($password) > 5;
     }
 
-    public function login(string $username, string $password, bool $one_time = false)
+    public function login(string $username, string $password, bool $one_time = false): ?string
     {
         if (!$this->validate_username($username)) {
             throw new Exception('Invalid username');
@@ -102,25 +96,25 @@ class Jars implements contract\Client
         return $this->token;
     }
 
-    public function token_user(string $token)
+    public function token_user(string $token): ?string
     {
         if (!$this->verify_token($token)) {
-            return;
+            return null;
         }
 
         return $this->verified_tokens[$token]->user;
     }
 
-    public function token_username(string $token)
+    public function token_username(string $token): ?string
     {
         if (!$this->verify_token($token)) {
-            return;
+            return null;
         }
 
         return $this->verified_tokens[$token]->username ?? $this->config()->root_username;
     }
 
-    public function verify_token(string $token)
+    public function verify_token(string $token): object|false
     {
         if (isset($this->verified_tokens[$token])) {
             return $this->verified_tokens[$token];
@@ -176,7 +170,7 @@ class Jars implements contract\Client
         return $token_object;
     }
 
-    public function logout()
+    public function logout(): void
     {
         if (!$line = $this->verify_token($this->token)) {
             return;
@@ -189,7 +183,7 @@ class Jars implements contract\Client
         ]]);
     }
 
-    public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null)
+    public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null): array
     {
         $affecteds = [];
         $commits = [];
@@ -261,7 +255,7 @@ class Jars implements contract\Client
         return $updated;
     }
 
-    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null)
+    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null): array
     {
         $config = $this->config();
 
@@ -290,7 +284,7 @@ class Jars implements contract\Client
         return $lines;
     }
 
-    public function save(array $lines)
+    public function save(array $lines): array
     {
         if (!$lines) {
             return $lines;
@@ -299,7 +293,7 @@ class Jars implements contract\Client
         return $this->import(date('Y-m-d H:i:s'), $lines);
     }
 
-    private function commit($timestamp, array $data, array $meta)
+    private function commit(string $timestamp, array $data, array $meta): void
     {
         foreach ($data as $id => $commit) {
             if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
@@ -346,14 +340,7 @@ class Jars implements contract\Client
         // Db::succeed('update master_record_lock set counter = counter + 1');
     }
 
-    private function head()
-    {
-        $master_record_file = $this->db_home . '/master.dat';
-        $master_record = $this->filesystem->get($master_record_file);
-        $head = substr($master_record, strrpos($master_record, "\n") ?: 0, 64);
-    }
-
-    public function h2n($h)
+    public function h2n(string $h): ?int
     {
         $sequence = $this->config()->sequence;
 
@@ -362,9 +349,11 @@ class Jars implements contract\Client
                 return $n;
             }
         }
+
+        return null;
     }
 
-    public function n2h($n)
+    public function n2h(int $n): string
     {
         // Generate a sequence secret: php -r 'echo base64_encode(random_bytes(33)) . "\n";'
         $sequence = $this->config()->sequence;
@@ -394,7 +383,7 @@ class Jars implements contract\Client
         return $id;
     }
 
-    public function masterlog_check()
+    public function masterlog_check(): void
     {
         $master_record_file = $this->db_home . '/master.dat';
         $master_meta_file = $master_record_file . '.meta';
@@ -408,17 +397,17 @@ class Jars implements contract\Client
         }
     }
 
-    public function delete($linetype, $id)
+    public function delete(string $linetype, string $id): array
     {
         return $this->linetype($linetype)->delete($id);
     }
 
-    public function fields($linetype)
+    public function fields(string $linetype): array
     {
         return $this->linetype($linetype)->fieldInfo();
     }
 
-    public function get($linetype, $id)
+    public function get(string $linetype, string $id): ?object
     {
         $line = $this->linetype($linetype)->get($this->token, $id);
 
@@ -429,7 +418,7 @@ class Jars implements contract\Client
         return $line;
     }
 
-    public function preview(array $lines)
+    public function preview(array $lines): array
     {
         if (!$lines) {
             return $lines;
@@ -438,14 +427,14 @@ class Jars implements contract\Client
         return $this->import(date('Y-m-d H:i:s'), $lines, true);
     }
 
-    public function record($table, $id, &$content_type = null)
+    public function record(string $table, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
     {
         $tableinfo = @$this->config()->tables[$table];;
         $ext = @$tableinfo->extension ?? 'json';
-        $suffix = $ext ? '.' . $ext : null;
+        $filename = $id . ($ext ? '.' . $ext : null);
         $content_type = @$tableinfo->content_type ?? 'application/json';
 
-        if (!is_file($file = $this->db_path('current/records/' . $table . '/' . $id . $suffix))) {
+        if (!is_file($file = $this->db_path('current/records/' . $table . '/' . $filename))) {
             return null;
         }
 
@@ -457,12 +446,12 @@ class Jars implements contract\Client
         return $this->report($report)->get($group, $min_version);
     }
 
-    public function groups(string $report, ?string $min_version = null)
+    public function groups(string $report, ?string $min_version = null): array
     {
         return $this->report($report)->groups($min_version);
     }
 
-    public function touch()
+    public function touch(): object|false
     {
         if (!$this->verify_token($this->token())) {
             return false;
@@ -473,7 +462,7 @@ class Jars implements contract\Client
         ];
     }
 
-    public function version()
+    public function version(): ?string
     {
         return $this->head;
     }
@@ -499,7 +488,7 @@ class Jars implements contract\Client
         return $this->known['configs'][$this->portal_home];
     }
 
-    public function linetype(string $name)
+    public function linetype(string $name): object
     {
         if (!isset($this->known['linetypes'][$name])) {
             $linetypeclass = $this->config()->linetypes[$name];
@@ -523,7 +512,7 @@ class Jars implements contract\Client
         return $this->known['linetypes'][$name];
     }
 
-    public function report(string $name)
+    public function report(string $name): object
     {
         if (!isset($this->known['reports'][$name])) {
             $reportclass = @$this->config()->reports[$name];
@@ -548,7 +537,7 @@ class Jars implements contract\Client
         return $this->known['reports'][$name];
     }
 
-    public function takeanumber()
+    public function takeanumber(): string
     {
         $pointer_file = $this->db_home . '/pointer.dat';
         $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
@@ -595,22 +584,22 @@ class Jars implements contract\Client
         return $this->token;
     }
 
-    public function db_path($path = null)
+    public function db_path(?string $path = null): string
     {
         return $this->db_home . ($path ? '/' . $path : null);
     }
 
-    public static function of(string $portal_home, string $db_home)
+    public static function of(string $portal_home, string $db_home): self
     {
         return new Jars($portal_home, $db_home);
     }
 
-    public function get_childset(string $linetype, string $id, string $property)
+    public function get_childset(string $linetype, string $id, string $property): array
     {
         return $this->linetype($linetype)->get_childset($this->token, $id, $property);
     }
 
-    public function refresh() : string
+    public function refresh(): string
     {
         $reports_dir = $this->db_path('reports');
         $lines_dir = $reports_dir . '/.refreshd/lines';
@@ -886,7 +875,7 @@ class Jars implements contract\Client
         throw new Exception('Invalid classifier');
     }
 
-    private function load_children_r(object $line, array $children, array &$childsets)
+    private function load_children_r(object $line, array $children, array &$childsets): void
     {
         foreach ($children as $property => $child) {
             if (is_numeric($property)) {
@@ -950,9 +939,9 @@ class Jars implements contract\Client
         }
     }
 
-    private function propagate_r(string $table, string $id, string $version, array &$changes = [], array &$seen = [])
+    private function propagate_r(string $table, string $id, string $version, array &$changes = [], array &$seen = []): void
     {
-        foreach ($this->fine_table_linetypes($table) as $linetype) {
+        foreach ($this->find_table_linetypes($table) as $linetype) {
             $relatives = array_merge(
                 $linetype->find_incoming_links(),
                 $linetype->find_incoming_inlines(),
@@ -993,7 +982,7 @@ class Jars implements contract\Client
         }
     }
 
-    public function reports() : array
+    public function reports(): array
     {
         $reports = [];
         $config = $this->config();
@@ -1025,7 +1014,7 @@ class Jars implements contract\Client
         return $reports;
     }
 
-    public function linetypes(?string $report = null) : array
+    public function linetypes(?string $report = null): array
     {
         if ($report) {
             if (!array_key_exists($report, $this->config()->reports)) {
@@ -1055,7 +1044,7 @@ class Jars implements contract\Client
         return $linetypes;
     }
 
-    private function dredge_r($lines)
+    private function dredge_r(array $lines): array
     {
         $dredged = [];
 
@@ -1108,7 +1097,7 @@ class Jars implements contract\Client
         }
     }
 
-    private static function array_keys_recursive(array $array, string $separtor = '/')
+    private static function array_keys_recursive(array $array, string $separtor = '/'): array
     {
         $keys = [];
 
@@ -1123,7 +1112,7 @@ class Jars implements contract\Client
         return $keys;
     }
 
-    public function fine_table_linetypes(string $table)
+    public function find_table_linetypes(string $table): array
     {
         $found = [];
 

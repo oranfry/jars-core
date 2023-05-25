@@ -73,7 +73,7 @@ abstract class Report
         return json_decode($diskContent);
     }
 
-    public function groups(?string $min_version = null)
+    public function groups(?string $min_version = null): array
     {
         return $this->get('groups', $min_version);
     }
