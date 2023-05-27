@@ -453,10 +453,10 @@ class Jars implements contract\Client
         return $this->report($report)->groups($min_version);
     }
 
-    public function touch(): object|false
+    public function touch(): ?object
     {
         if (!$this->verify_token($this->token())) {
-            return false;
+            return null;
         }
 
         return (object) [
