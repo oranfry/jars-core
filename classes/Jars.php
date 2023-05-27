@@ -170,17 +170,19 @@ class Jars implements contract\Client
         return $token_object;
     }
 
-    public function logout(): void
+    public function logout(): bool
     {
         if (!$line = $this->verify_token($this->token)) {
-            return;
+            return true;
         }
 
-        $this->save([(object)[
+        $lines = $this->save([(object)[
             'id' => $line->id,
             'type' => 'token',
             '_is' => false,
         ]]);
+
+        return property_exists($token = reset($lines), '_is') && $token->_is === false;
     }
 
     public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null): array
@@ -429,7 +431,7 @@ class Jars implements contract\Client
 
     public function record(string $table, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
     {
-        $tableinfo = @$this->config()->tables[$table];;
+        $tableinfo = @$this->config()->tables[$table];
         $ext = @$tableinfo->extension ?? 'json';
         $filename = $id . ($ext ? '.' . $ext : null);
         $content_type = @$tableinfo->content_type ?? 'application/json';
