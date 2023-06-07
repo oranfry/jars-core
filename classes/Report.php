@@ -34,7 +34,7 @@ abstract class Report
             }
 
             return array_values($report);
-        }, null);
+        });
     }
 
     private function file($group)
@@ -163,7 +163,7 @@ abstract class Report
             }
 
             return $report;
-        }, []);
+        });
     }
 
     private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])

@@ -719,9 +719,13 @@ class Jars implements contract\Client
                         }
                     }
 
-                    $groups_file = $lines_dir . '/' . $report_name . '/' . $id . '.json';
+                    $groups_file = $lines_dir . '/' . $report_name . '/' . $linetype . '/' . $id . '.json';
 
                     if (!is_dir(dirname($groups_file))) {
+                        if (!is_dir(dirname($groups_file, 2))) {
+                            mkdir(dirname($groups_file, 2));
+                        }
+
                         mkdir(dirname($groups_file));
                     }
 
