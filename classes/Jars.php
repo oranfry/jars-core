@@ -755,7 +755,7 @@ class Jars implements contract\Client
                         $this->filesystem->delete($groups_file);
                     }
 
-                    foreach (array_merge(array_diff($past_groups, $current_groups), array_diff($current_groups, $past_groups)) as $group) {
+                    foreach (array_merge($past_groups, $current_groups) as $group) {
                         $changed_reports[$report_name][$group] = true;
                     }
                 }
