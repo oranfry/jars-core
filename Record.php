@@ -2,8 +2,6 @@
 
 namespace jars;
 
-use Exception;
-
 class Record
 {
     private $data;
@@ -98,7 +96,7 @@ class Record
             return $this->data['content'];
         }
 
-        return json_encode($this->data);
+        return json_encode($this->data, JSON_UNESCAPED_SLASHES);
     }
 
     public function equals(self $another)

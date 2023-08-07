@@ -3,7 +3,6 @@
 namespace jars;
 
 use ReflectionFunction;
-use Exception;
 
 class Linetype
 {
@@ -339,7 +338,7 @@ class Linetype
 
                 if (@$line->$alias) {
                     if (!is_string($line->$alias)) {
-                        throw new Exception($alias . ' should be a string containing the id of another record ' . json_encode($line->$alias));
+                        throw new Exception($alias . ' should be a string containing the id of another record');
                     }
 
                     $affecteds[] = (object) [

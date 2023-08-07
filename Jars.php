@@ -2,8 +2,6 @@
 
 namespace jars;
 
-use Exception;
-
 class Jars implements contract\Client
 {
     private string $db_home;
@@ -327,7 +325,7 @@ class Jars implements contract\Client
 
         // Db::succeed('select counter from master_record_lock for update');
 
-        $master_export = $timestamp . ' ' . json_encode(array_values($data));
+        $master_export = $timestamp . ' ' . json_encode(array_values($data), JSON_UNESCAPED_SLASHES);
         $meta_export = implode(' ', $meta);
 
         $this->head = hash('sha256', $this->head . $master_export);
@@ -448,9 +446,9 @@ class Jars implements contract\Client
         return $this->report($report)->get($group, $min_version);
     }
 
-    public function groups(string $report, ?string $min_version = null): array
+    public function groups(string $report, string $prefix = '', ?string $min_version = null): array
     {
-        return $this->report($report)->groups($min_version);
+        return $this->report($report)->groups($prefix, $min_version);
     }
 
     public function touch(): ?object
@@ -750,7 +748,7 @@ class Jars implements contract\Client
                     }
 
                     if ($current_groups) {
-                        $this->filesystem->put($groups_file, json_encode(['groups' => $current_groups]));
+                        $this->filesystem->put($groups_file, json_encode(['groups' => $current_groups], JSON_UNESCAPED_SLASHES));
                     } elseif ($this->filesystem->has($groups_file)) {
                         $this->filesystem->delete($groups_file);
                     }
@@ -825,30 +823,24 @@ class Jars implements contract\Client
                         $new_changed[$derived_reportname . '/' . $derived_groupname] = true;
 
                         $group_file = $this->db_path("reports/$derived_reportname/$derived_groupname.json");
-                        $groups_file = $this->db_path("reports/$derived_reportname/groups.json");
-                        $groups = json_decode($this->filesystem->get($groups_file) ?? '[]');
 
-                        if ($cache[$derived_reportname][$derived_groupname] === null) {
-                            $this->filesystem->delete($group_file);
-
-                            if (in_array($derived_groupname, $groups)) {
-                                $groups = array_values(array_diff($groups, [$derived_groupname]));
-                            }
-                        } else {
-                            $this->filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname]));
+                        if ($exists = $cache[$derived_reportname][$derived_groupname] !== null) {
+                            $this->filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname], JSON_UNESCAPED_SLASHES));
 
                             if (!in_array($derived_groupname, $groups)) {
                                 $groups[] = $derived_groupname;
 
                                 sort($groups);
                             }
+                        } else {
+                            $this->filesystem->delete($group_file);
+
+                            if (in_array($derived_groupname, $groups)) {
+                                $groups = array_values(array_diff($groups, [$derived_groupname]));
+                            }
                         }
 
-                        if ($groups) {
-                            $this->filesystem->put($groups_file, json_encode($groups));
-                        } else {
-                            $this->filesystem->delete($groups_file);
-                        }
+                        $derived_report->maintain_groups($derived_groupname, $exists);
                     }
                 }
             }

@@ -2,7 +2,7 @@
 
 namespace jars;
 
-use Exception;
+use jars\contract\Constants;
 
 abstract class Report
 {
@@ -73,9 +73,19 @@ abstract class Report
         return json_decode($diskContent);
     }
 
-    public function groups(?string $min_version = null): array
+    public function groups(string $prefix = '', ?string $min_version = null): array
     {
-        return $this->get('groups', $min_version);
+        if (!preg_match('/^' . Constants::GROUP_PREFIX_PATTERN . '$/', $prefix)) {
+            throw new Exception('Invalid prefix');
+        }
+
+        if ($min_version !== null) {
+            $this->wait_for_version($min_version);
+        }
+
+        $groupsfile = $this->file($prefix . 'groups');
+
+        return json_decode($this->filesystem->get($groupsfile) ?? '[]');
     }
 
     public function has($group)
@@ -96,6 +106,24 @@ abstract class Report
         return false;
     }
 
+    public function jars()
+    {
+        if (func_num_args()) {
+            $jars = func_get_arg(0);
+
+            if (!($jars instanceof Jars)) {
+                throw new Exception(__METHOD__ . ': argument should be instance of Jars');
+            }
+
+            $prev = $this->jars;
+            $this->jars = $jars;
+
+            return $prev;
+        }
+
+        return $this->jars;
+    }
+
     public function linetypes()
     {
         if ($this->is_derived()) {
@@ -111,40 +139,73 @@ abstract class Report
         return $linetypes;
     }
 
-    public function manip($group, $callback)
+    public function maintain_groups(string $group, bool $exists): void
     {
-        $report = $this->get($group);
-        $report = $callback($report);
+        $prefix = ($prefix = dirname($group)) !== '.' ? $prefix . '/' : '';
+        $subgroup = basename($group);
 
-        $this->save($group, $report);
-
-        return $report;
+        $this->maintain_groups_r($prefix, $subgroup, $exists);
     }
 
-    public function save($group, $report)
+    public function maintain_groups_r(string $prefix, string $subgroup, bool $exists): void
     {
-        $export = json_encode($report, JSON_PRETTY_PRINT);
-        $groupsfile = $this->file('groups');
-        $reportfile = $this->file($group);
-        $groups = json_decode($this->filesystem->get($groupsfile) ?? json_encode(static::DEFAULT));
+        $groupsfile = $this->file($prefix . 'groups');
+        $groups = json_decode($this->filesystem->get($groupsfile) ?? '[]');
 
-        if ($export == json_encode(static::DEFAULT, JSON_PRETTY_PRINT)) {
-            $this->filesystem->delete($reportfile);
-
-            if (($key = array_search($group, $groups)) !== false) {
-                unset($groups[$key]);
-                $groups = array_values($groups);
-                $this->filesystem->put($groupsfile, json_encode($groups, JSON_PRETTY_PRINT));
-            }
-        } else {
-            $this->filesystem->put($reportfile, $export);
-
-            if (!in_array($group, $groups)) {
-                $groups[] = $group;
+        if ($exists) {
+            if (!in_array($subgroup, $groups)) {
+                $groups[] = $subgroup;
                 sort($groups);
-                $this->filesystem->put($groupsfile, json_encode($groups, JSON_PRETTY_PRINT));
             }
+        } elseif (false !== $key = array_search($subgroup, $groups)) {
+            unset($groups[$key]);
+            $groups = array_values($groups);
         }
+
+        $export = json_encode($groups, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        if ($exists = $export !== '[]') {
+            $this->filesystem->put($groupsfile, $export);
+        } else {
+            $this->filesystem->delete($groupsfile);
+        }
+
+        $pattern = '/^(' . Constants::GROUP_PREFIX_PATTERN . ')(' . Constants::GROUP_SUB_PATTERN . ')\\/$/';
+
+        if (preg_match($pattern, $prefix, $matches)) {
+            $this->maintain_groups_r($matches[1], $matches[2], $exists);
+        }
+    }
+
+    public function manip(string $group, $callback)
+    {
+        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
+            throw new Exception('Invalid group');
+        }
+
+        $data = $callback($this->get($group));
+
+        $this->save($group, $data);
+
+        return $data;
+    }
+
+    public function save(string $group, $data)
+    {
+        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
+            throw new Exception('Invalid group');
+        }
+
+        $export = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $reportfile = $this->file($group);
+
+        if ($exists = $export !== json_encode(static::DEFAULT, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) {
+            $this->filesystem->put($reportfile, $export);
+        } else {
+            $this->filesystem->delete($reportfile);
+        }
+
+        $this->maintain_groups($group, $exists);
     }
 
     public function upsert(string $group, object $line, ?callable $sorter = null)
@@ -218,23 +279,5 @@ abstract class Report
         }
 
         throw new Exception("Version timeout waiting for [$min_version]; still at $feedback[current_version]");
-    }
-
-    public function jars()
-    {
-        if (func_num_args()) {
-            $jars = func_get_arg(0);
-
-            if (!($jars instanceof Jars)) {
-                throw new Exception(__METHOD__ . ': argument should be instance of Jars');
-            }
-
-            $prev = $this->jars;
-            $this->jars = $jars;
-
-            return $prev;
-        }
-
-        return $this->jars;
     }
 }

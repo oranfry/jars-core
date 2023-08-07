@@ -1,12 +1,11 @@
 {
-    "name": "oranfry/jars-core",
-    "version": "1.0.0",
-    "require": {
-        "oranfry/jars-contracts": "*"
-    },
     "autoload": {
         "psr-4": {
-            "jars\\": "classes"
+            "jars\\": ""
         }
+    },
+    "name": "oranfry/jars-core",
+    "require": {
+        "oranfry/jars-contracts": "*"
     }
 }

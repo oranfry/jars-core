@@ -99,7 +99,7 @@ class Link
             return;
         }
 
-        $this->jars->filesystem()->put($this->file(), count($this->data) ? json_encode($this->data) : null);
+        $this->jars->filesystem()->put($this->file(), count($this->data) ? json_encode($this->data, JSON_UNESCAPED_SLASHES) : null);
     }
 
     public function name()

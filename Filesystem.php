@@ -2,8 +2,6 @@
 
 namespace jars;
 
-use Exception;
-
 class Filesystem
 {
     public const NO_PERSIST = 1 << 0;
