@@ -132,7 +132,7 @@ class Jars implements contract\Client
 
         try {
             $line = $this->linetype('token')->get(null, $id);
-        } catch (Exception $e) {}
+        } catch (\Exception $e) {}
 
         if (
             !$line
@@ -708,12 +708,16 @@ class Jars implements contract\Client
 
                         $this->load_children_r($line, @$listen->children ?? [], $childsets);
 
-                        if (property_exists($listen, 'classify') && $listen->classify) {
-                            $current_groups = static::classifier_value($listen->classify, $line);
-                        } elseif (property_exists($report, 'classify') && $report->classify) {
-                            $current_groups = static::classifier_value($report->classify, $line);
-                        } else {
-                            $current_groups = ['all'];
+                        try {
+                            if (property_exists($listen, 'classify') && $listen->classify) {
+                                $current_groups = static::classifier_value($listen->classify, $line);
+                            } elseif (property_exists($report, 'classify') && $report->classify) {
+                                $current_groups = static::classifier_value($report->classify, $line);
+                            } else {
+                                $current_groups = ['all'];
+                            }
+                        } catch (Exception $e) {
+                            throw new Exception($e->getMessage() . ': ' . $report_name);
                         }
                     }
 
@@ -801,12 +805,16 @@ class Jars implements contract\Client
                         continue;
                     }
 
-                    if (property_exists($listen, 'classify') && $listen->classify) {
-                        $derived_groupnames = @static::classifier_value($listen->classify, $change_groupname);
-                    } elseif (property_exists($derived_report, 'classify') && $derived_report->classify) {
-                        $derived_groupnames = @static::classifier_value($derived_report->classify, $change_groupname);
-                    } else {
-                        $derived_groupnames = ['all'];
+                    try {
+                        if (property_exists($listen, 'classify') && $listen->classify) {
+                            $derived_groupnames = @static::classifier_value($listen->classify, $change_groupname);
+                        } elseif (property_exists($derived_report, 'classify') && $derived_report->classify) {
+                            $derived_groupnames = @static::classifier_value($derived_report->classify, $change_groupname);
+                        } else {
+                            $derived_groupnames = ['all'];
+                        }
+                    } catch (Exception $e) {
+                        throw new Exception($e->getMessage() . ': ' . $report_name);
                     }
 
                     foreach ($derived_groupnames as $derived_groupname) {
@@ -864,7 +872,7 @@ class Jars implements contract\Client
             $groups = ($classify)($line);
 
             if (!is_array($groups) || array_filter($groups, function ($group) { return !is_string($group) || !$group; })) {
-                throw new Exception('Invalid classication result');
+                throw new Exception('Invalid classification result');
             }
 
             return $groups;
