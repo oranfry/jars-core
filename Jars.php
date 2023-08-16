@@ -189,6 +189,9 @@ class Jars implements contract\Client
         $commits = [];
         $original_filesystem = clone $this->filesystem;
         $original_filesystem->freeze();
+
+        $this->filesystem->startPseudoTransaction();
+
         $lines = $this->import_r($original_filesystem, $timestamp, $lines, $affecteds, $commits, null, $logging);
         $meta  = [];
 
@@ -249,6 +252,8 @@ class Jars implements contract\Client
                 $this->filesystem->persist();
             }
         }
+
+        $this->filesystem->endPseudoTransaction();
 
         $this->trigger('entryimported');
 

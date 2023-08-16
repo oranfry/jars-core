@@ -8,13 +8,14 @@ class Filesystem
     public const READ_ONLY = 1 << 1;
     public const AUTO_PERSIST = 1 << 2;
 
-    private $auto_persist;
-    private $donefile = null;
-    private $no_persist;
-    private $read_only;
-    private $store = [];
+    private bool $auto_persist;
+    private ?bool $auto_persist_backup = null;
+    private ?string $donefile = null;
+    private bool $no_persist;
+    private bool $read_only;
+    private array $store = [];
 
-    public function __construct($options = self::AUTO_PERSIST)
+    public function __construct(int $options = self::AUTO_PERSIST)
     {
         $this->auto_persist = (bool) ($options & static::AUTO_PERSIST);
         $this->no_persist = (bool) ($options & static::NO_PERSIST);
@@ -205,4 +206,25 @@ class Filesystem
             'dirty' => false,
         ];
     }
+
+    public function startPseudoTransaction()
+    {
+        if ($this->auto_persist_backup !== null) {
+            throw new Exception('Already in a pseudo transaction');
+        }
+
+        $this->auto_persist_backup = $this->auto_persist;
+        $this->auto_persist = false;
+    }
+
+    public function endPseudoTransaction()
+    {
+        if ($this->auto_persist_backup === null) {
+            throw new Exception('Not in a pseudo transaction');
+        }
+
+        $this->auto_persist = $this->auto_persist_backup;
+        $this->auto_persist_backup = null;
+    }
+
 }
