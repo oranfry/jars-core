@@ -2,6 +2,8 @@
 
 namespace jars;
 
+use jars\contract\Constants;
+
 class Jars implements contract\Client
 {
     private string $db_home;
@@ -446,7 +448,7 @@ class Jars implements contract\Client
         return file_get_contents($file);
     }
 
-    public function group(string $report, string $group, ?string $min_version = null)
+    public function group(string $report, string $group = '', ?string $min_version = null)
     {
         return $this->report($report)->get($group, $min_version);
     }
@@ -719,7 +721,7 @@ class Jars implements contract\Client
                             } elseif (property_exists($report, 'classify') && $report->classify) {
                                 $current_groups = static::classifier_value($report->classify, $line);
                             } else {
-                                $current_groups = ['all'];
+                                $current_groups = [''];
                             }
                         } catch (Exception $e) {
                             throw new Exception($e->getMessage() . ': ' . $report_name);
@@ -816,7 +818,7 @@ class Jars implements contract\Client
                         } elseif (property_exists($derived_report, 'classify') && $derived_report->classify) {
                             $derived_groupnames = @static::classifier_value($derived_report->classify, $change_groupname);
                         } else {
-                            $derived_groupnames = ['all'];
+                            $derived_groupnames = [''];
                         }
                     } catch (Exception $e) {
                         throw new Exception($e->getMessage() . ': ' . $report_name);
@@ -874,9 +876,10 @@ class Jars implements contract\Client
         }
 
         if (is_callable($classify)) {
-            $groups = ($classify)($line);
-
-            if (!is_array($groups) || array_filter($groups, function ($group) { return !is_string($group) || !$group; })) {
+            if (
+                !is_array($groups = ($classify)($line))
+                || array_filter($groups, fn ($group) => !is_string($group) || !preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group))
+            ) {
                 throw new Exception('Invalid classification result');
             }
 

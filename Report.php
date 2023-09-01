@@ -8,21 +8,14 @@ abstract class Report
 {
     const DEFAULT = [];
 
+    const ENCODING_OPTIONS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
+
     protected $filesystem;
     protected $jars;
     public $classify;
     public $listen = [];
     public $name;
     public $sorter;
-
-    public function delegate_handling($token, $table, $record, $oldrecord, $oldlinks) : void
-    {
-        if (!in_array($table, $this->tables)) {
-            return;
-        }
-
-        $this->{"handle_" . $table}($token, $record, $oldrecord, $oldlinks);
-    }
 
     public function delete(string $group, string $linetype, string $id)
     {
@@ -37,9 +30,11 @@ abstract class Report
         });
     }
 
-    private function file($group)
+    private function file(string $group): string
     {
-        return $this->jars->db_path("reports/{$this->name}/{$group}.json");
+        $basename = $group ?: '_empty';
+
+        return $this->jars->db_path("reports/$this->name/$basename.json");
     }
 
     public function filesystem()
@@ -62,6 +57,10 @@ abstract class Report
 
     public function get(string $group, ?string $min_version = null)
     {
+        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
+            throw new Exception('Invalid group');
+        }
+
         if ($min_version !== null) {
             $this->wait_for_version($min_version);
         }
@@ -83,13 +82,20 @@ abstract class Report
             $this->wait_for_version($min_version);
         }
 
-        $groupsfile = $this->file($prefix . 'groups');
-
-        return json_decode($this->filesystem->get($groupsfile) ?? '[]');
+        return json_decode($this->filesystem->get($this->groupsfile($prefix)) ?? '[]');
     }
 
-    public function has($group)
+    private function groupsfile(string $prefix): string
     {
+        return $this->file($prefix . 'groups');
+    }
+
+    public function has(string $group): bool
+    {
+        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
+            throw new Exception('Invalid group');
+        }
+
         return $this->filesystem->has($this->file($group));
     }
 
@@ -141,7 +147,11 @@ abstract class Report
 
     public function maintain_groups(string $group, bool $exists): void
     {
-        $prefix = ($prefix = dirname($group)) !== '.' ? $prefix . '/' : '';
+        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
+            throw new Exception('Invalid group');
+        }
+
+        $prefix = in_array($prefix = dirname($group), ['.', '']) ? '' : $prefix . '/';
         $subgroup = basename($group);
 
         $this->maintain_groups_r($prefix, $subgroup, $exists);
@@ -149,7 +159,11 @@ abstract class Report
 
     public function maintain_groups_r(string $prefix, string $subgroup, bool $exists): void
     {
-        $groupsfile = $this->file($prefix . 'groups');
+        if (!preg_match('/^' . Constants::GROUP_PREFIX_PATTERN . '$/', $prefix)) {
+            throw new Exception('Invalid prefix');
+        }
+
+        $groupsfile = $this->groupsfile($prefix);
         $groups = json_decode($this->filesystem->get($groupsfile) ?? '[]');
 
         if ($exists) {
@@ -162,7 +176,7 @@ abstract class Report
             $groups = array_values($groups);
         }
 
-        $export = json_encode($groups, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $export = json_encode($groups, static::ENCODING_OPTIONS);
 
         if ($exists = $export !== '[]') {
             $this->filesystem->put($groupsfile, $export);
@@ -196,10 +210,10 @@ abstract class Report
             throw new Exception('Invalid group');
         }
 
-        $export = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $export = json_encode($data, static::ENCODING_OPTIONS);
         $reportfile = $this->file($group);
 
-        if ($exists = $export !== json_encode(static::DEFAULT, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) {
+        if ($exists = $export !== json_encode(static::DEFAULT, static::ENCODING_OPTIONS)) {
             $this->filesystem->put($reportfile, $export);
         } else {
             $this->filesystem->delete($reportfile);
