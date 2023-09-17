@@ -185,7 +185,7 @@ class Jars implements contract\Client
         return property_exists($token = reset($lines), '_is') && $token->_is === false;
     }
 
-    public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null): array
+    public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
     {
         $affecteds = [];
         $commits = [];
@@ -194,7 +194,7 @@ class Jars implements contract\Client
 
         $this->filesystem->startPseudoTransaction();
 
-        $lines = $this->import_r($original_filesystem, $timestamp, $lines, $affecteds, $commits, null, $logging);
+        $lines = $this->import_r($original_filesystem, $timestamp, $lines, $affecteds, $commits, null, $logging, $differential);
         $meta  = [];
 
         if (!$dryrun && file_exists($current_version_file = $this->db_home . '/version.dat') && !file_exists("{$this->db_home}/past")) {
@@ -262,7 +262,7 @@ class Jars implements contract\Client
         return $updated;
     }
 
-    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null): array
+    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
     {
         $config = $this->config();
 
@@ -279,13 +279,13 @@ class Jars implements contract\Client
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->import($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
+                ->import($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging, $differential);
         }
 
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->recurse_to_children($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging);
+                ->recurse_to_children($original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging, $differential);
         }
 
         return $lines;

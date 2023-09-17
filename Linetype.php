@@ -209,9 +209,21 @@ class Linetype
         return $line;
     }
 
-    public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
+    public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null, bool $differential = false)
     {
         $this->jars->trigger('importline', $this->table);
+
+        if (!$differential) {
+            $fields = array_merge(
+                array_keys($this->fields),
+                array_keys($this->borrow),
+                array_filter(array_map(fn($l) => @$l->only_parent, $this->find_incoming_links()))
+            );
+
+            foreach ($fields as $field) {
+                $line->$field ??= null;
+            }
+        }
 
         $tableinfo = @$this->jars->config()->tables[$this->table] ?? (object) [];
         $oldline = null;
@@ -407,6 +419,7 @@ class Linetype
                         $discard,
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
+                        $differential,
                     );
 
                     $affecteds[] = (object) [
@@ -436,6 +449,7 @@ class Linetype
                         $discard,
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
+                        $differential,
                     );
                 }
             }
@@ -472,8 +486,16 @@ class Linetype
         $commits[$line->id] = $commit;
     }
 
-    public function recurse_to_children($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null)
-    {
+    public function recurse_to_children(
+        Filesystem $original_filesystem,
+        string $timestamp,
+        object $line,
+        array &$affecteds,
+        array &$commits,
+        ?string $ignorelink = null,
+        ?int $logging = null,
+        bool $differential = false
+    ) {
         // recurse to normal children
 
         foreach ($this->children as $child) {
@@ -498,7 +520,8 @@ class Linetype
                         $affecteds,
                         $childcommits,
                         null,
-                        $logging !== null ? $logging + 1 : null
+                        $logging !== null ? $logging + 1 : null,
+                        $differential,
                     );
 
                     $commits[$line->id]->{$child->property} = array_filter(array_values($childcommits));
@@ -565,7 +588,7 @@ class Linetype
         // recurse to inline children
 
         foreach (@$this->inlinelinks ?? [] as $child) {
-            if ($child->tablelink == $ignorelink) {
+            if ($ignorelink && $child->tablelink == $ignorelink) {
                 continue;
             }
 
