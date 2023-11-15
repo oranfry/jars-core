@@ -59,14 +59,20 @@ class Jars implements contract\Client
 
         $config = $this->config();
 
-        if (($root_username = $config->root_username) && $username == $root_username) {
-            if (!($root_password = $config->root_password)) {
-                throw new Exception('Root username is set up without a root password');
-            }
+        if (!$root_username = $config->root_username) {
+            throw new Exception('Root username is not set up');
+        }
 
-            if ($password !== $root_password) {
-                return null;
-            }
+        if (!$root_password = $config->root_password) {
+            throw new Exception('Root username is set up without a root password');
+        }
+
+        if ($username !== $root_username) {
+            throw new Exception('Unknown username');
+        }
+
+        if ($password !== $root_password) {
+            throw new Exception('Incorrect password');
         }
 
         $random_bits = bin2hex(openssl_random_pseudo_bytes(32));
