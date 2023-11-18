@@ -2,6 +2,9 @@
 
 namespace jars;
 
+use jars\contract\BadTokenException;
+use jars\contract\BadUsernameOrPasswordException;
+use jars\contract\ConfigException;
 use jars\contract\Constants;
 
 class Jars implements contract\Client
@@ -49,30 +52,38 @@ class Jars implements contract\Client
 
     public function login(string $username, string $password, bool $one_time = false): ?string
     {
-        if (!$this->validate_username($username)) {
-            throw new Exception('Invalid username');
-        }
-
-        if (!$this->validate_password($password)) {
-            throw new Exception('Invalid password');
-        }
-
         $config = $this->config();
+        $start = microtime(true) * 1e6;
 
-        if (!$root_username = $config->root_username) {
-            throw new Exception('Root username is not set up');
-        }
+        try {
+            if (!$root_username = $config->root_username) {
+                throw new ConfigException('Root username is not set up');
+            }
 
-        if (!$root_password = $config->root_password) {
-            throw new Exception('Root username is set up without a root password');
-        }
+            if (!$root_password = $config->root_password) {
+                throw new ConfigException('Root password is not set up');
+            }
 
-        if ($username !== $root_username) {
-            throw new Exception('Unknown username');
-        }
+            if (!$this->validate_username($username)) {
+                throw new BadUsernameOrPasswordException('Invalid username');
+            }
 
-        if ($password !== $root_password) {
-            throw new Exception('Incorrect password');
+            if (!$this->validate_password($password)) {
+                throw new BadUsernameOrPasswordException('Invalid password');
+            }
+
+            if ($username !== $root_username) {
+                throw new BadUsernameOrPasswordException('Unknown username');
+            }
+
+            if ($password !== $root_password) {
+                throw new BadUsernameOrPasswordException('Incorrect password');
+            }
+        } catch (\Exception $e) {
+            $end = $start + (float) 1e5; // make sure failure always takes 0.1s
+            usleep($end - microtime(true) * 1e6);
+
+            throw $e;
         }
 
         $random_bits = bin2hex(openssl_random_pseudo_bytes(32));
@@ -464,10 +475,10 @@ class Jars implements contract\Client
         return $this->report($report)->groups($prefix, $min_version);
     }
 
-    public function touch(): ?object
+    public function touch(): object
     {
         if (!$this->verify_token($this->token())) {
-            return null;
+            throw new BadTokenException;
         }
 
         return (object) [
@@ -579,19 +590,12 @@ class Jars implements contract\Client
         return $this->filesystem;
     }
 
-    public function token()
+    public function token(?string $token = null): string|self
     {
         if (func_num_args()) {
-            $token = func_get_arg(0);
-
-            if (!is_string($token)) {
-                throw new Exception(__METHOD__ . ': argument should be a string');
-            }
-
-            $prev = $this->token;
             $this->token = $token;
 
-            return $prev;
+            return $this;
         }
 
         return $this->token;
