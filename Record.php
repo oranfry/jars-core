@@ -2,6 +2,8 @@
 
 namespace jars;
 
+use jars\contract\Exception;
+
 class Record
 {
     private $data;

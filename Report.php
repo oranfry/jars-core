@@ -3,6 +3,7 @@
 namespace jars;
 
 use jars\contract\Constants;
+use jars\contract\Exception;
 
 abstract class Report
 {

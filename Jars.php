@@ -6,6 +6,7 @@ use jars\contract\BadTokenException;
 use jars\contract\BadUsernameOrPasswordException;
 use jars\contract\ConfigException;
 use jars\contract\Constants;
+use jars\contract\Exception;
 
 class Jars implements contract\Client
 {

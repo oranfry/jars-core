@@ -3,6 +3,7 @@
 namespace jars;
 
 use ReflectionFunction;
+use jars\contract\Exception;
 
 class Linetype
 {
