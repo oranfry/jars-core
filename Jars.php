@@ -81,7 +81,7 @@ class Jars implements contract\Client
             }
         } catch (\Exception $e) {
             $end = $start + (float) 1e5; // make sure failure always takes 0.1s
-            usleep($end - microtime(true) * 1e6);
+            usleep(max(0, $end - microtime(true) * 1e6));
 
             throw $e;
         }
