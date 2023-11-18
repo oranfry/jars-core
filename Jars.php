@@ -590,7 +590,7 @@ class Jars implements contract\Client
         return $this->filesystem;
     }
 
-    public function token(?string $token = null): string|self
+    public function token(?string $token = null): null|string|self
     {
         if (func_num_args()) {
             $this->token = $token;
