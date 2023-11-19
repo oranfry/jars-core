@@ -39,19 +39,12 @@ abstract class Report
         return $this->jars->db_path("reports/$this->name/$basename.json");
     }
 
-    public function filesystem()
+    public function filesystem(?Filesystem $filesystem = null): null|Filesystem|self
     {
         if (func_num_args()) {
-            $filesystem = func_get_arg(0);
-
-            if (!($filesystem instanceof Filesystem)) {
-                throw new Exception(__METHOD__ . ': argument should be instance of Filesystem');
-            }
-
-            $prev = $this->filesystem;
             $this->filesystem = $filesystem;
 
-            return $prev;
+            return $this;
         }
 
         return $this->filesystem;
@@ -114,19 +107,12 @@ abstract class Report
         return false;
     }
 
-    public function jars()
+    public function jars(?Jars $jars = null): null|Jars|self
     {
         if (func_num_args()) {
-            $jars = func_get_arg(0);
-
-            if (!($jars instanceof Jars)) {
-                throw new Exception(__METHOD__ . ': argument should be instance of Jars');
-            }
-
-            $prev = $this->jars;
             $this->jars = $jars;
 
-            return $prev;
+            return $this;
         }
 
         return $this->jars;

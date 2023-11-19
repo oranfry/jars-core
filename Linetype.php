@@ -871,19 +871,12 @@ class Linetype
         return $subset;
     }
 
-    public function jars()
+    public function jars(?Jars $jars): null|Jars|self
     {
         if (func_num_args()) {
-            $jars = func_get_arg(0);
-
-            if (!($jars instanceof Jars)) {
-                throw new Exception(__METHOD__ . ': argument should be instance of Jars');
-            }
-
-            $prev = $this->jars;
             $this->jars = $jars;
 
-            return $prev;
+            return $this;
         }
 
         return $this->jars;

@@ -573,19 +573,12 @@ class Jars implements contract\Client
         return $id;
     }
 
-    public function filesystem()
+    public function filesystem(?Filesystem $filesystem = null): null|Filesystem|self
     {
         if (func_num_args()) {
-            $filesystem = func_get_arg(0);
-
-            if (!($filesystem instanceof Filesystem)) {
-                throw new Exception(__METHOD__ . ': argument should be instance of Filesystem');
-            }
-
-            $prev = $this->filesystem;
             $this->filesystem = $filesystem;
 
-            return $prev;
+            return $this;
         }
 
         return $this->filesystem;

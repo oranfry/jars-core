@@ -42,19 +42,12 @@ class Filesystem
         $this->store = $store;
     }
 
-    public function donefile()
+    public function donefile(?string $donefile = null): null|string|self
     {
         if (func_num_args()) {
-            $donefile = func_get_arg(0);
-
-            if (!is_string($donefile)) {
-                throw new Exception(__METHOD__ . ': argument should be a string');
-            }
-
-            $prev = $this->donefile;
             $this->donefile = $donefile;
 
-            return $prev;
+            return $this;
         }
 
         return $this->donefile;
