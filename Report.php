@@ -4,6 +4,7 @@ namespace jars;
 
 use jars\contract\Constants;
 use jars\contract\Exception;
+use jars\contract\VersionTimeoutException;
 
 abstract class Report
 {
@@ -293,6 +294,6 @@ abstract class Report
             }
         }
 
-        throw new Exception("Version timeout waiting for [$min_version]; still at $feedback[current_version]");
+        throw new VersionTimeoutException("Version timeout waiting for [$min_version]; still at $feedback[current_version]");
     }
 }
