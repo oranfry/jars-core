@@ -133,7 +133,7 @@ class Linetype
         if (!isset(self::$incoming_links[$this->jars->token()])) {
             self::$incoming_links[$this->jars->token()] = [];
 
-            foreach ($this->jars->config()->linetypes as $name => $class) {
+            foreach ($this->jars->config()->linetypes() as $name => $class) {
                 $linetype = $this->jars->linetype($name);
 
                 foreach ($linetype->children as $child) {
@@ -152,7 +152,7 @@ class Linetype
         if (self::$incoming_inlines === null) {
             self::$incoming_inlines = [];
 
-            foreach ($this->jars->config()->linetypes as $name => $class) {
+            foreach ($this->jars->config()->linetypes() as $name => $class) {
                 $linetype = $this->jars->linetype($name);
 
                 foreach ($linetype->inlinelinks as $child) {
@@ -226,7 +226,7 @@ class Linetype
             }
         }
 
-        $tableinfo = @$this->jars->config()->tables[$this->table] ?? (object) [];
+        $tableinfo = $this->jars->config()->tables()[$this->table] ?? (object) [];
         $oldline = null;
         $oldrecord = null;
         $old_inlines = [];
@@ -807,9 +807,9 @@ class Linetype
 
     public function fieldInfo(): array
     {
-        $newline_fields = @$this->jars->config()->respect_newline_fields[$this->name] ?? [];
-        $download_fields = @$this->jars->config()->download_fields[$this->name] ?? [];
-        $float_dp = @$this->jars->config()->float_dp[$this->name] ?? [];
+        $newline_fields = $this->jars->config()->respect_newline_fields()[$this->name] ?? [];
+        $download_fields = $this->jars->config()->download_fields()[$this->name] ?? [];
+        $float_dp = $this->jars->config()->float_dp()[$this->name] ?? [];
 
         $fields = [(object) [
             'name' => 'id',
