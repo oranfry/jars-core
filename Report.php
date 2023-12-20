@@ -233,7 +233,9 @@ abstract class Report
     {
         $min_version_file = $this->jars->db_path('versions/' . $min_version);
 
-        if (!file_exists($min_version_file)) {
+        if (null === $min_version_raw = $this->filesystem->get($min_version_file)) {
+            $this->filesystem->forget($min_version_file);
+
             throw new Exception('No such version');
         }
 
@@ -241,7 +243,7 @@ abstract class Report
 
         $this->filesystem->forget($version_file);
 
-        $min_version_num = $feedback['min_version_num'] = (int) $this->filesystem->get($min_version_file);
+        $min_version_num = $feedback['min_version_num'] = (int) $min_version_raw;
         $current_version_number = $feedback['current_version_number'] = (int) $this->filesystem->get($this->jars->db_path('versions/' . $current_version));
 
         if ($current_version_number >= $min_version_num) {
