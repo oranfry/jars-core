@@ -93,7 +93,7 @@ class Sequence
         return $this->subs;
     }
 
-    public function transform(?Callable $transform = null): self|Callable
+    public function transform(?Callable $transform = null): self|Callable|null
     {
         if (func_num_args()) {
             $this->transform = $transform;
