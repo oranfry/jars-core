@@ -178,6 +178,10 @@ class Jars implements contract\Client
 
     public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $affecteds = [];
         $commits = [];
         $original_filesystem = clone $this->filesystem;
@@ -255,6 +259,10 @@ class Jars implements contract\Client
 
     public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         foreach ($lines as $line) {
             if (!is_object($line)) {
                 throw new Exception('Lines should be an array of objects');
@@ -282,6 +290,10 @@ class Jars implements contract\Client
 
     public function save(array $lines): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         if (!$lines) {
             return $lines;
         }
@@ -338,6 +350,10 @@ class Jars implements contract\Client
 
     public function h2n(string $h): ?int
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $sequence = $this->config->sequence();
 
         for ($n = 1; $n <= $sequence->max(); $n++) {
@@ -351,6 +367,10 @@ class Jars implements contract\Client
 
     public function n2h(int $n): string
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $sequence = $this->config->sequence();
 
         $banned = array_unique(array_merge($sequence->banned_chars(), ['+', '/', '=']));
@@ -371,6 +391,10 @@ class Jars implements contract\Client
 
     public function masterlog_check(): void
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $master_record_file = $this->db_home . '/master.dat';
         $master_meta_file = $master_record_file . '.meta';
 
@@ -385,16 +409,28 @@ class Jars implements contract\Client
 
     public function delete(string $linetype, string $id): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         return $this->linetype($linetype)->delete($id);
     }
 
     public function fields(string $linetype): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         return $this->linetype($linetype)->fieldInfo();
     }
 
     public function get(string $linetype, string $id): ?object
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $line = $this->linetype($linetype)->get($this->token, $id);
 
         if (!$line) {
@@ -406,6 +442,10 @@ class Jars implements contract\Client
 
     public function preview(array $lines): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         if (!$lines) {
             return $lines;
         }
@@ -415,6 +455,10 @@ class Jars implements contract\Client
 
     public function record(string $table, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $tableinfo = $this->config->tables()[$table] ?? null;
         $ext = $tableinfo->extension ?? 'json';
         $filename = $id . ($ext ? '.' . $ext : null);
@@ -429,11 +473,19 @@ class Jars implements contract\Client
 
     public function group(string $report, string $group = '', ?string $min_version = null)
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         return $this->report($report)->get($group, $min_version);
     }
 
     public function groups(string $report, string $prefix = '', ?string $min_version = null): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         return $this->report($report)->groups($prefix, $min_version);
     }
 
@@ -450,6 +502,10 @@ class Jars implements contract\Client
 
     public function version(): ?string
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         return $this->head;
     }
 
@@ -484,6 +540,10 @@ class Jars implements contract\Client
 
     public function report(string $name): object
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         if (!isset($this->known['reports'][$name])) {
             $reportclass = $this->config->reports()[$name] ?? null;
 
@@ -509,6 +569,10 @@ class Jars implements contract\Client
 
     public function takeanumber(): string
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $pointer_file = $this->db_home . '/pointer.dat';
         $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
 
@@ -552,11 +616,19 @@ class Jars implements contract\Client
 
     public function get_childset(string $linetype, string $id, string $property): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         return $this->linetype($linetype)->get_childset($this->token, $id, $property);
     }
 
     public function refresh(): string
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $reports_dir = $this->db_path('reports');
         $lines_dir = $reports_dir . '/.refreshd/lines';
 
@@ -737,6 +809,10 @@ class Jars implements contract\Client
 
     public function refresh_derived(array $changed, string $version, array &$cache = []): void
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $new_changed = [];
 
         foreach (array_keys($this->config->reports()) as $derived_reportname) {
@@ -947,6 +1023,10 @@ class Jars implements contract\Client
 
     public function reports(): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $reports = [];
 
         foreach (array_keys($this->config->reports()) as $name) {
@@ -978,6 +1058,10 @@ class Jars implements contract\Client
 
     public function linetypes(?string $report = null): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         if ($report) {
             if (!array_key_exists($report, $this->config->reports())) {
                 throw new Exception('No such report [' . $report . ']');
@@ -1076,6 +1160,10 @@ class Jars implements contract\Client
 
     public function find_table_linetypes(string $table): array
     {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
         $found = [];
 
         foreach (array_keys($this->config->linetypes()) as $linetype_name) {
