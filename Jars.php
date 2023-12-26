@@ -56,6 +56,13 @@ class Jars implements contract\Client
             && strlen($password) > 5;
     }
 
+    public function persist(): self
+    {
+        $this->filesystem->persist();
+
+        return $this;
+    }
+
     public function login(string $username, string $password, bool $one_time = false): ?string
     {
         $start = microtime(true) * 1e6;
