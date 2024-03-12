@@ -776,6 +776,8 @@ class Jars implements contract\Client
                         throw new Exception($current_groups);
                     }
 
+                    $current_groups = array_values($current_groups); // be forgiving of non-numeric or non-sequential indices
+
                     foreach (array_diff($past_groups, $current_groups) as $group) {
                         $report->delete($group, $linetype, $id);
                     }
