@@ -65,7 +65,10 @@ class Linetype
             }
 
             if (property_exists($line, $child->property)) {
-                $this->jars->linetype($child->linetype)->borrow_r($token, $line->{$child->property}, $child->tablelink);
+                $this
+                    ->jars
+                    ->linetype($child->linetype)
+                    ->borrow_r($token, $line->{$child->property}, $child->tablelink);
             }
         }
 
@@ -184,28 +187,10 @@ class Linetype
         $line->id = $id;
         $line->type = $this->name;
 
+        $this->only_parent_r($line);
         $this->pack_r($token, $collected, $line);
         $this->borrow_r($token, $line);
         $inlines = $this->strip_inline_children($line);
-
-        foreach ($this->find_incoming_links() as $parent) {
-            if (!$alias = @$parent->only_parent) {
-                continue;
-            }
-
-            $line->$alias = null;
-            $link = Link::of($this->jars, $parent->tablelink, $id, !@$parent->reverse);
-
-            if (!$parent_id = $link->firstChild()) {
-                continue;
-            }
-
-            if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
-                throw new Exception('Parent [' . $parent_id . '] does not exist');
-            }
-
-            $line->$alias = $parent_id;
-        }
 
         return $line;
     }
@@ -887,6 +872,43 @@ class Linetype
         foreach ($fields as $field) {
             if (empty($line->$field)) {
                 $line->field = null;
+            }
+        }
+    }
+
+    public function only_parent_r(object $line, ?string $ignorelink = null)
+    {
+        foreach ($this->find_incoming_links() as $parent) {
+            if (!$alias = @$parent->only_parent) {
+                continue;
+            }
+
+            $line->$alias = null;
+            $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+
+            if (!$parent_id = $link->firstChild()) {
+                continue;
+            }
+
+            if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
+                throw new Exception('Parent [' . $parent_id . '] does not exist');
+            }
+
+            $line->$alias = $parent_id;
+        }
+
+        // recurse to inline children
+
+        foreach (@$this->inlinelinks ?? [] as $child) {
+            if ($child->tablelink == $ignorelink) {
+                continue;
+            }
+
+            if ($childline = @$line->{$child->property}) {
+                $this
+                    ->jars
+                    ->linetype($child->linetype)
+                    ->only_parent_r($childline, $child->tablelink);
             }
         }
     }
