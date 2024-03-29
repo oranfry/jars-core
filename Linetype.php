@@ -187,8 +187,8 @@ class Linetype
         $line->id = $id;
         $line->type = $this->name;
 
-        $this->only_parent_r($line);
         $this->pack_r($token, $collected, $line);
+        $this->only_parent_r($line);
         $this->borrow_r($token, $line);
         $inlines = $this->strip_inline_children($line);
 
