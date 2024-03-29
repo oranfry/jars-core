@@ -656,6 +656,7 @@ class Linetype
                 }, $childlinetype->fields);
 
                 $line->{$child->property}->id = $childrecords['/']->id;
+                $line->{$child->property}->type = $child->linetype;
 
                 $childlinetype->pack_r($token, $records, $line->{$child->property}, $childpath, $child->tablelink);
             }
