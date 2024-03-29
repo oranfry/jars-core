@@ -166,7 +166,7 @@ class Record
             $this->data = json_decode($content, true);
 
             if (!is_array($this->data)) {
-                throw new Exception($this->data);
+                throw new Exception('Invalid JSON found in a record file [' . $file . ']');
             }
         }
     }
