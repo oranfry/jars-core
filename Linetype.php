@@ -238,7 +238,7 @@ class Linetype
             $this->complete($line);
 
             if ($errors = $this->validate($line)) {
-                throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors) . '. ' . var_export($line, 1));
+                throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors));
             }
 
             if (!@$line->id) { // Add
