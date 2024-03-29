@@ -478,22 +478,26 @@ class Jars implements contract\Client
         return file_get_contents($file);
     }
 
-    public function group(string $report, string $group = '', ?string $min_version = null)
+    public function group(string $report, string $group = '', string|bool|null $min_version = null)
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        return $this->report($report)->get($group, $min_version);
+        return $this
+            ->report($report)
+            ->get($group, $min_version === true ? $this->head : ($min_version ?: null));
     }
 
-    public function groups(string $report, string $prefix = '', ?string $min_version = null): array
+    public function groups(string $report, string $prefix = '', string|bool|null $min_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        return $this->report($report)->groups($prefix, $min_version);
+        return $this
+            ->report($report)
+            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
     }
 
     public function touch(): object
@@ -600,7 +604,7 @@ class Jars implements contract\Client
         return $this->filesystem;
     }
 
-    public function token(?string $token = null): null|string|self
+    public function token(?string $token = null): self|string|null
     {
         if (func_num_args()) {
             $this->token = $token;
