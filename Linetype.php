@@ -285,13 +285,26 @@ class Linetype
             foreach ($this->children as $child) {
                 $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
 
-                foreach ($link->relatives() as $child_id) {
-                    $affecteds[] = (object) [
-                        'action' => 'disconnect',
-                        'tablelink' => $child->tablelink,
-                        'left' => (@$child->reverse ? $child_id : $line->id),
-                        'right' => (@$child->reverse ? $line->id : $child_id),
-                    ];
+                if (@$child->cascade_delete) {
+                    $this->jars->import_r(
+                        $original_filesystem,
+                        $timestamp,
+                        array_map(fn ($child_id) => (object) ['type' => $child->linetype, 'id' => $child_id, '_is' => false], $link->relatives()),
+                        $affecteds,
+                        $commits,
+                        $child->tablelink,
+                        $logging !== null ? $logging + 1 : null,
+                        $differential,
+                    );
+                } else {
+                    foreach ($link->relatives() as $child_id) {
+                        $affecteds[] = (object) [
+                            'action' => 'disconnect',
+                            'tablelink' => $child->tablelink,
+                            'left' => (@$child->reverse ? $child_id : $line->id),
+                            'right' => (@$child->reverse ? $line->id : $child_id),
+                        ];
+                    }
                 }
             }
 
@@ -487,43 +500,43 @@ class Linetype
         foreach ($this->children as $child) {
             $child_linetype = $this->jars->linetype($child->linetype);
 
-            if ($alias = @$child->only_parent) {
-                if ($childlines = @$line->{$child->property}) {
-                    $childcommits = [];
+            if ($childlines = @$line->{$child->property}) {
+                if (!$alias = @$child->only_parent) {
+                    throw new Exception('Unexpected ' . $this->name . '->' . $child->property);
+                }
 
-                    foreach ($childlines as $childline) {
-                        if (!@$childline->type) {
-                            $childline->type = $child_linetype->name;
-                        } elseif ($childline->type != $child_linetype->name) {
-                            throw new Exception('Given line->type is not consistent with child linetype');
-                        }
-                    }
+                $childcommits = [];
 
-                    $childlines = $this->jars->import_r(
-                        $original_filesystem,
-                        $timestamp,
-                        $childlines,
-                        $affecteds,
-                        $childcommits,
-                        null,
-                        $logging !== null ? $logging + 1 : null,
-                        $differential,
-                    );
-
-                    $commits[$line->id]->{$child->property} = array_filter(array_values($childcommits));
-
-                    foreach ($childlines as $childline) {
-                        $childline->$alias = $line->id;
-                        $affecteds[] = (object) [
-                            'action' => 'connect',
-                            'tablelink' => $child->tablelink,
-                            'left' => (@$child->reverse ? $childline->id : $line->id),
-                            'right' => (@$child->reverse ? $line->id : $childline->id),
-                        ];
+                foreach ($childlines as $childline) {
+                    if (!@$childline->type) {
+                        $childline->type = $child_linetype->name;
+                    } elseif ($childline->type != $child_linetype->name) {
+                        throw new Exception('Given line->type is not consistent with child linetype');
                     }
                 }
-            } elseif (@$line->{$child->property}) {
-                throw new Exception('Unexpected ' . $this->name . '->' . $child->property);
+
+                $childlines = $this->jars->import_r(
+                    $original_filesystem,
+                    $timestamp,
+                    $childlines,
+                    $affecteds,
+                    $childcommits,
+                    null,
+                    $logging !== null ? $logging + 1 : null,
+                    $differential,
+                );
+
+                $commits[$line->id]->{$child->property} = array_filter(array_values($childcommits));
+
+                foreach ($childlines as $childline) {
+                    $childline->$alias = $line->id;
+                    $affecteds[] = (object) [
+                        'action' => 'connect',
+                        'tablelink' => $child->tablelink,
+                        'left' => (@$child->reverse ? $childline->id : $line->id),
+                        'right' => (@$child->reverse ? $line->id : $childline->id),
+                    ];
+                }
             }
 
             if (is_array(@$line->_adopt->{$child->property})) {
