@@ -756,7 +756,7 @@ class Jars implements contract\Client
                                 $current_groups = [''];
                             }
                         } catch (Exception $e) {
-                            throw new Exception($e->getMessage() . ': ' . $report_name);
+                            throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
                         }
                     }
 
@@ -775,12 +775,6 @@ class Jars implements contract\Client
                     }
 
                     // remove
-
-                    if (!is_array($current_groups)) {
-                        throw new Exception($current_groups);
-                    }
-
-                    $current_groups = array_values($current_groups); // be forgiving of non-numeric or non-sequential indices
 
                     foreach (array_diff($past_groups, $current_groups) as $group) {
                         $report->delete($group, $linetype, $id);
@@ -859,7 +853,7 @@ class Jars implements contract\Client
                             $derived_groupnames = [''];
                         }
                     } catch (Exception $e) {
-                        throw new Exception($e->getMessage() . ': ' . $report_name);
+                        throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
                     }
 
                     foreach ($derived_groupnames as $derived_groupname) {
@@ -904,27 +898,29 @@ class Jars implements contract\Client
         }
     }
 
-    private static function classifier_value($classify, $line) {
-        if (is_array($classify)) {
-            return $classify;
+    private static function classifier_value($classify, $line): array
+    {
+        if (is_callable($classify)) {
+            $classify = ($classify)($line);
+        }
+
+        if (is_null($classify)) {
+            return [];
         }
 
         if (is_string($classify)) {
-            return [$classify];
+            $classify = [$classify];
         }
 
-        if (is_callable($classify)) {
-            if (
-                !is_array($groups = ($classify)($line))
-                || array_filter($groups, fn ($group) => !is_string($group) || !preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group))
-            ) {
-                throw new Exception('Invalid classification result');
-            }
-
-            return $groups;
+        if (!is_array($classify)) {
+            throw new Exception('Could not resolve classification result to an array');
         }
 
-        throw new Exception('Invalid classifier');
+        if ($wrong = array_filter($classify, fn ($group) => !is_string($group) || !preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group))) {
+            throw new Exception('Invalid classification results [' . implode(',', array_map(fn ($w) => json_encode($w, JSON_UNESCAPED_SLASHES), $wrong)) . ']');
+        }
+
+        return array_values($classify); // be forgiving of non-numeric or non-sequential indices
     }
 
     private function load_children_r(object $line, array $children, array &$childsets): void
