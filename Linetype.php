@@ -195,7 +195,7 @@ class Linetype
         return $line;
     }
 
-    public function import($token, Filesystem $original_filesystem, $timestamp, $line, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null, bool $differential = false)
+    public function import($token, Filesystem $original_filesystem, $timestamp, object $line, ?string $base_version, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null, bool $differential = false)
     {
         $this->jars->trigger('importline', $this->table);
 
@@ -290,6 +290,7 @@ class Linetype
                         $original_filesystem,
                         $timestamp,
                         array_map(fn ($child_id) => (object) ['type' => $child->linetype, 'id' => $child_id, '_is' => false], $link->relatives()),
+                        $base_version,
                         $affecteds,
                         $commits,
                         $child->tablelink,
@@ -414,6 +415,7 @@ class Linetype
                         $original_filesystem,
                         $timestamp,
                         [$childline],
+                        $base_version,
                         $affecteds,
                         $discard,
                         $child->tablelink,
@@ -444,6 +446,7 @@ class Linetype
                         $original_filesystem,
                         $timestamp,
                         (object) ['id' => $oldchild->id, '_is' => false],
+                        $base_version,
                         $affecteds,
                         $discard,
                         $child->tablelink,
@@ -489,6 +492,7 @@ class Linetype
         Filesystem $original_filesystem,
         string $timestamp,
         object $line,
+        ?string $base_version,
         array &$affecteds,
         array &$commits,
         ?string $ignorelink = null,
@@ -519,6 +523,7 @@ class Linetype
                     $original_filesystem,
                     $timestamp,
                     $childlines,
+                    $base_version,
                     $affecteds,
                     $childcommits,
                     null,
@@ -678,6 +683,7 @@ class Linetype
 
     public function save($lines): array
     {
+        throw new Exception('Linetype::save() used');
         foreach ($lines as $line) {
             if (!@$line->type) {
                 $line->type = $this->name;

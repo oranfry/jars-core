@@ -4,6 +4,7 @@ namespace jars;
 
 use jars\contract\BadTokenException;
 use jars\contract\BadUsernameOrPasswordException;
+use jars\contract\ConcurrentModificationException;
 use jars\contract\Config;
 use jars\contract\ConfigException;
 use jars\contract\Constants;
@@ -19,7 +20,9 @@ class Jars implements contract\Client
     private $version_number;
     private ?string $head = null;
     private Config $config;
+    private $touch_handle;
     private string $db_home;
+    private ?string $locker_pin;
 
     public function __construct(Config $config, string $db_home)
     {
@@ -183,8 +186,10 @@ class Jars implements contract\Client
         return property_exists($token = reset($lines), '_is') && $token->_is === false;
     }
 
-    public function import(string $timestamp, array $lines, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
+    public function import(string $timestamp, array $lines, ?string $base_version = null, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
     {
+        $base_version ??= $this->head;
+
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
@@ -194,12 +199,14 @@ class Jars implements contract\Client
         $original_filesystem = clone $this->filesystem;
         $original_filesystem->freeze();
 
-        $this->filesystem->startPseudoTransaction();
-
-        $lines = $this->import_r($original_filesystem, $timestamp, $lines, $affecteds, $commits, null, $logging, $differential);
+        $lines = $this->import_r($original_filesystem, $timestamp, $lines, $base_version, $affecteds, $commits, null, $logging, $differential);
         $meta  = [];
 
-        if (!$dryrun && file_exists($current_version_file = $this->db_home . '/version.dat') && !file_exists("{$this->db_home}/past")) {
+        if (
+            !$dryrun
+            && file_exists($current_version_file = $this->db_home . '/version.dat')
+            && !file_exists("{$this->db_home}/past")
+        ) {
             $version = trim(file_get_contents($current_version_file));
 
             `mkdir -p "{$this->db_home}/past" && cp -r "{$this->db_home}/current" "{$this->db_home}/past/$version"`;
@@ -250,21 +257,65 @@ class Jars implements contract\Client
         } else {
             $commits = array_filter($commits);
 
-            $this->commit($timestamp, $commits, $meta);
-
-            if (defined('JARS_PERSIST_PER_IMPORT') && JARS_PERSIST_PER_IMPORT) {
-                $this->filesystem->persist();
-            }
+            $this->commit($timestamp, $commits, $meta, $base_version);
         }
-
-        $this->filesystem->endPseudoTransaction();
 
         $this->trigger('entryimported');
 
         return $updated;
     }
 
-    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
+    public function lock(): false|string
+    {
+        if ($this->touch_handle) {
+            throw new Exception('Attempt to lock when already locked');
+        }
+
+        @mkdir($this->db_home, 0777, true);
+
+        // TODO: Implement timeout using non-blocking locking in a loop until
+
+        if (!($this->touch_handle = fopen($this->db_home . '/touch.dat', 'a'))) {
+            throw new Exception('Could not open the touch file');
+        }
+
+        if (!flock($this->touch_handle, LOCK_EX)) {
+            fclose($this->touch_handle);
+
+            $this->touch_handle = null;
+
+            throw new Exception('Could not acquire a lock over the touch file');
+        }
+
+        return $this->locker_pin = bin2hex(random_bytes(32));
+    }
+
+    private function unlock_internal(): void
+    {
+        $this->unlock($this->locker_pin);
+    }
+
+    public function unlock(string $locker_pin): void
+    {
+        if (!$this->touch_handle) {
+            throw new Exception('Attempt to unlock when not locked');
+        }
+
+        if ($this->locker_pin !== $locker_pin) {
+            throw new Exception('Incorrect locker PIN provided for unlocking');
+        }
+
+        $this->filesystem->persist()->reset();
+
+        ftruncate($this->touch_handle, 0);
+        fwrite($this->touch_handle, microtime(true));
+        fclose($this->touch_handle);
+
+        $this->touch_handle = null;
+        $this->locker_pin = null;
+    }
+
+    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, ?string $base_version, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -283,19 +334,19 @@ class Jars implements contract\Client
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->import($this->token, $original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging, $differential);
+                ->import($this->token, $original_filesystem, $timestamp, $line, $base_version, $affecteds, $commits, $ignorelink, $logging, $differential);
         }
 
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->recurse_to_children($original_filesystem, $timestamp, $line, $affecteds, $commits, $ignorelink, $logging, $differential);
+                ->recurse_to_children($original_filesystem, $timestamp, $line, $base_version, $affecteds, $commits, $ignorelink, $logging, $differential);
         }
 
         return $lines;
     }
 
-    public function save(array $lines): array
+    public function save(array $lines, ?string $base_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -305,10 +356,10 @@ class Jars implements contract\Client
             return $lines;
         }
 
-        return $this->import(date('Y-m-d H:i:s'), $lines);
+        return $this->import(date('Y-m-d H:i:s'), $lines, $base_version);
     }
 
-    private function commit(string $timestamp, array $data, array $meta): void
+    private function commit(string $timestamp, array $data, array $meta, ?string $base_version): void
     {
         foreach ($data as $id => $commit) {
             if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
@@ -320,17 +371,17 @@ class Jars implements contract\Client
             return;
         }
 
-        if (!is_dir($version_dir = $this->db_home . '/versions')) {
-            mkdir($version_dir, 0777, true);
-        }
+        $has_updates = array_reduce($meta, fn ($carrie, $mathison) => $carrie || substr($mathison, 0, 1) !== '+');
+
+        @mkdir($version_dir = $this->db_home . '/versions', 0777, true);
 
         $master_record_file = $this->db_home . '/master.dat';
         $master_meta_file = $master_record_file . '.meta';
         $current_version_file = $this->db_home . '/version.dat';
 
         if ($this->head === null) {
-            if (file_exists($current_version_file)) {
-                $this->head = $this->filesystem->get($current_version_file);
+            if ($head = $this->filesystem->get($current_version_file)) {
+                $this->head = $head;
                 $this->version_number = (int) $this->filesystem->get($version_dir . '/' . $this->head);
             } else {
                 $this->head = hash('sha256', 'jars'); // version 0
@@ -338,7 +389,17 @@ class Jars implements contract\Client
             }
         }
 
-        // Db::succeed('select counter from master_record_lock for update');
+        // complain if this would cause concurrent modification
+
+        if ($has_updates && $base_version !== $this->head) {
+            throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
+        }
+
+        if ($i_lock = !isset($this->locker_pin)) {
+            $this->lock();
+        }
+
+        // we have the floor!
 
         $master_export = $timestamp . ' ' . json_encode(array_values($data), JSON_UNESCAPED_SLASHES);
         $meta_export = implode(' ', $meta);
@@ -346,13 +407,14 @@ class Jars implements contract\Client
         $this->head = hash('sha256', $this->head . $master_export);
         $this->version_number++;
 
-        $this->filesystem->donefile($this->db_home . '/touch.dat');
         $this->filesystem->put($current_version_file, $this->head);
         $this->filesystem->put($version_dir . '/' . $this->head, $this->version_number);
         $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
         $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
 
-        // Db::succeed('update master_record_lock set counter = counter + 1');
+        if ($i_lock) {
+            $this->unlock_internal();
+        }
     }
 
     public function h2n(string $h): ?int
@@ -447,7 +509,7 @@ class Jars implements contract\Client
         return $line;
     }
 
-    public function preview(array $lines): array
+    public function preview(array $lines, ?string $base_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -457,7 +519,7 @@ class Jars implements contract\Client
             return $lines;
         }
 
-        return $this->import(date('Y-m-d H:i:s'), $lines, true);
+        return $this->import(date('Y-m-d H:i:s'), $lines, $base_version, true);
     }
 
     public function record(string $table, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
@@ -484,6 +546,8 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
+        $this->head = $this->reports_version();
+
         return $this
             ->report($report)
             ->get($group, $min_version === true ? $this->head : ($min_version ?: null));
@@ -494,6 +558,8 @@ class Jars implements contract\Client
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
+
+        $this->head = $this->reports_version();
 
         return $this
             ->report($report)
@@ -634,14 +700,34 @@ class Jars implements contract\Client
         return $this->linetype($linetype)->get_childset($this->token, $id, $property);
     }
 
+    private function reports_version_file(): string
+    {
+        return $this->db_path('reports') . "/version.dat";
+    }
+
+    private function reports_version(&$as_number = null, &$file = null): string
+    {
+        $file = $this->reports_version_file();
+
+        if (!$this->filesystem->has($file)) {
+            $as_number = 0;
+
+            return hash('sha256', 'jars');
+        }
+
+        $version = $this->filesystem->get($file);
+        $as_number = (int) $this->filesystem->get($this->db_path('versions/' . $version));
+
+        return $version;
+    }
+
     public function refresh(): string
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        $reports_dir = $this->db_path('reports');
-        $lines_dir = $reports_dir . '/.refreshd/lines';
+        $lines_dir = $this->db_path('reports') . '/.refreshd/lines';
 
         if (!is_dir($lines_dir)) {
             mkdir($lines_dir, 0777, true);
@@ -649,14 +735,7 @@ class Jars implements contract\Client
 
         $bunny = $this->filesystem->get($this->db_path('/version.dat'));
         $bunny_number = (int) $this->filesystem->get($this->db_path('versions/' . $bunny));
-
-        $greyhound = null;
-        $greyhound_number = 0;
-
-        if ($this->filesystem->has($greyhound_file = $reports_dir . "/version.dat")) {
-            $greyhound = $this->filesystem->get($greyhound_file);
-            $greyhound_number = (int) $this->filesystem->get($this->db_path('versions/' . $greyhound));
-        }
+        $greyhound = $this->reports_version($greyhound_number);
 
         if ($greyhound && $bunny == $greyhound) {
             return $greyhound;
@@ -807,7 +886,7 @@ class Jars implements contract\Client
             $this->filesystem->put($pastfile, null);
         };
 
-        $this->filesystem->put($greyhound_file, $bunny); // the greyhound has caught the bunny!
+        $this->filesystem->put($this->reports_version_file(), $bunny); // the greyhound has caught the bunny!
 
         $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
 

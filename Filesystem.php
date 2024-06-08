@@ -11,13 +11,11 @@ class Filesystem
     public const AUTO_PERSIST = 1 << 2;
 
     private bool $auto_persist;
-    private ?bool $auto_persist_backup = null;
-    private ?string $donefile = null;
     private bool $no_persist;
     private bool $read_only;
     private array $store = [];
 
-    public function __construct(int $options = self::AUTO_PERSIST)
+    public function __construct(int $options = 0)
     {
         $this->auto_persist = (bool) ($options & static::AUTO_PERSIST);
         $this->no_persist = (bool) ($options & static::NO_PERSIST);
@@ -40,17 +38,6 @@ class Filesystem
         }
 
         $this->store = $store;
-    }
-
-    public function donefile(?string $donefile = null): null|string|self
-    {
-        if (func_num_args()) {
-            $this->donefile = $donefile;
-
-            return $this;
-        }
-
-        return $this->donefile;
     }
 
     public function put(string $file, $content)
@@ -106,8 +93,6 @@ class Filesystem
             throw new Exception('Attempt made to persist to no-persist filesystem');
         }
 
-        $did_something = false;
-
         foreach ($this->store as $file => $details) {
             if (!$details->dirty) {
                 continue;
@@ -120,12 +105,7 @@ class Filesystem
                 unlink($file);
             }
 
-            $did_something = true;
             $details->dirty = false;
-        }
-
-        if ($did_something && $this->donefile) {
-            file_put_contents($this->donefile, microtime(true));
         }
 
         return $this;
@@ -201,25 +181,4 @@ class Filesystem
             'dirty' => false,
         ];
     }
-
-    public function startPseudoTransaction()
-    {
-        if ($this->auto_persist_backup !== null) {
-            throw new Exception('Already in a pseudo transaction');
-        }
-
-        $this->auto_persist_backup = $this->auto_persist;
-        $this->auto_persist = false;
-    }
-
-    public function endPseudoTransaction()
-    {
-        if ($this->auto_persist_backup === null) {
-            throw new Exception('Not in a pseudo transaction');
-        }
-
-        $this->auto_persist = $this->auto_persist_backup;
-        $this->auto_persist_backup = null;
-    }
-
 }
