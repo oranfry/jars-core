@@ -705,14 +705,14 @@ class Jars implements contract\Client
         return $this->db_path('reports') . "/version.dat";
     }
 
-    private function reports_version(&$as_number = null, &$file = null): string
+    private function reports_version(&$as_number = null, &$file = null): ?string
     {
         $file = $this->reports_version_file();
 
         if (!$this->filesystem->has($file)) {
             $as_number = 0;
 
-            return hash('sha256', 'jars');
+            return null;
         }
 
         $version = $this->filesystem->get($file);
@@ -733,7 +733,7 @@ class Jars implements contract\Client
             mkdir($lines_dir, 0777, true);
         }
 
-        $bunny = $this->filesystem->get($this->db_path('/version.dat'));
+        $bunny = $this->filesystem->get($this->db_path('version.dat'));
         $bunny_number = (int) $this->filesystem->get($this->db_path('versions/' . $bunny));
         $greyhound = $this->reports_version($greyhound_number);
 
@@ -884,11 +884,12 @@ class Jars implements contract\Client
 
         foreach (array_filter(explode("\n", `test -d "$past_dir" && find "$past_dir" -type f || true` ?? '')) as $pastfile) {
             $this->filesystem->put($pastfile, null);
-        };
+        }
 
         $this->filesystem->put($this->reports_version_file(), $bunny); // the greyhound has caught the bunny!
 
         $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
+        $this->filesystem->persist()->reset();
 
         return $bunny;
     }
