@@ -694,7 +694,7 @@ class Jars implements contract\Client
 
     private function reports_version_file(): string
     {
-        return $this->db_path('reports') . "/version.dat";
+        return $this->db_path('reports/version.dat');
     }
 
     private function reports_version(&$as_number = null, &$file = null): ?string
@@ -719,7 +719,7 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $lines_dir = $this->db_path('reports') . '/.refreshd/lines';
+        $lines_dir = $this->db_path('reports/.refreshd/lines');
 
         if (!is_dir($lines_dir)) {
             mkdir($lines_dir, 0777, true);
