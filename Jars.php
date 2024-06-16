@@ -378,7 +378,11 @@ class Jars implements contract\Client
         $master_meta_file = $master_record_file . '.meta';
         $current_version_file = $this->db_home . '/version.dat';
 
-        $this->head ??= $this->filesystem->get($current_version_file) ?? hash('sha256', 'jars');
+        if ($i_lock = !isset($this->locker_pin)) {
+            $this->lock();
+        }
+
+        $this->head = $this->filesystem->get($current_version_file) ?? hash('sha256', 'jars');
 
         $version_number = $this->version_number_of($this->head);
 
@@ -386,10 +390,6 @@ class Jars implements contract\Client
 
         if ($has_updates && $base_version !== $this->head) {
             throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
-        }
-
-        if ($i_lock = !isset($this->locker_pin)) {
-            $this->lock();
         }
 
         // we have the floor!
