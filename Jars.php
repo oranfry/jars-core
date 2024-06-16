@@ -389,6 +389,10 @@ class Jars implements contract\Client
         // complain if this would cause concurrent modification
 
         if ($has_updates && $base_version !== $this->head) {
+            if ($i_lock) {
+                $this->unlock_internal();
+            }
+
             throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
         }
 
