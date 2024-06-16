@@ -17,7 +17,6 @@ class Jars implements contract\Client
     private $listeners = [];
     private $token;
     private $verified_tokens = [];
-    private $version_number;
     private ?string $head = null;
     private Config $config;
     private $touch_handle;
@@ -379,15 +378,9 @@ class Jars implements contract\Client
         $master_meta_file = $master_record_file . '.meta';
         $current_version_file = $this->db_home . '/version.dat';
 
-        if ($this->head === null) {
-            if ($head = $this->filesystem->get($current_version_file)) {
-                $this->head = $head;
-                $this->version_number = (int) $this->filesystem->get($version_dir . '/' . $this->head);
-            } else {
-                $this->head = hash('sha256', 'jars'); // version 0
-                $this->version_number = 0;
-            }
-        }
+        $this->head ??= $this->filesystem->get($current_version_file) ?? hash('sha256', 'jars');
+
+        $version_number = $this->version_number_of($this->head);
 
         // complain if this would cause concurrent modification
 
@@ -405,10 +398,9 @@ class Jars implements contract\Client
         $meta_export = implode(' ', $meta);
 
         $this->head = hash('sha256', $this->head . $master_export);
-        $this->version_number++;
 
         $this->filesystem->put($current_version_file, $this->head);
-        $this->filesystem->put($version_dir . '/' . $this->head, $this->version_number);
+        $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
         $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
         $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
 
@@ -1264,5 +1256,20 @@ class Jars implements contract\Client
         }
 
         return $found;
+    }
+
+    private function version_number_of(string $version): int
+    {
+        if ($version === hash('sha256', 'jars')) {
+            return 0;
+        }
+
+        $file = $this->db_path('versions/' . $version);
+
+        if (null === $number = $this->filesystem->get($file)) {
+            throw new Exception('Could not resolve version [' . $version . '] to a number');
+        }
+
+        return intval($number);
     }
 }
