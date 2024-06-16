@@ -203,7 +203,7 @@ class Jars implements contract\Client
 
         if (
             !$dryrun
-            && file_exists($current_version_file = $this->db_home . '/version.dat')
+            && file_exists($current_version_file = $this->current_version_file())
             && !file_exists("{$this->db_home}/past")
         ) {
             $version = trim(file_get_contents($current_version_file));
@@ -376,13 +376,12 @@ class Jars implements contract\Client
 
         $master_record_file = $this->db_home . '/master.dat';
         $master_meta_file = $master_record_file . '.meta';
-        $current_version_file = $this->db_home . '/version.dat';
 
         if ($i_lock = !isset($this->locker_pin)) {
             $this->lock();
         }
 
-        $this->head = $this->filesystem->get($current_version_file) ?? hash('sha256', 'jars');
+        $this->head = $this->db_version();
 
         $version_number = $this->version_number_of($this->head);
 
@@ -403,7 +402,7 @@ class Jars implements contract\Client
 
         $this->head = hash('sha256', $this->head . $master_export);
 
-        $this->filesystem->put($current_version_file, $this->head);
+        $this->filesystem->put($this->current_version_file(), $this->head);
         $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
         $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
         $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
@@ -478,6 +477,8 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
+        $this->head = $this->db_version();
+
         return $this->linetype($linetype)->delete($id);
     }
 
@@ -495,6 +496,8 @@ class Jars implements contract\Client
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
+
+        $this->head = $this->db_version();
 
         $line = $this->linetype($linetype)->get($this->token, $id);
 
@@ -533,6 +536,8 @@ class Jars implements contract\Client
             return null;
         }
 
+        $this->head = $this->db_version();
+
         return file_get_contents($file);
     }
 
@@ -567,6 +572,8 @@ class Jars implements contract\Client
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
+
+        $this->head = $this->db_version();
 
         return (object) [
             'timestamp' => time(),
@@ -734,6 +741,8 @@ class Jars implements contract\Client
         $greyhound = $this->reports_version($greyhound_number);
 
         if ($greyhound && $bunny == $greyhound) {
+            $this->head = $greyhound;
+
             return $greyhound;
         }
 
@@ -886,6 +895,8 @@ class Jars implements contract\Client
 
         $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
         $this->filesystem->persist()->reset();
+
+        $this->head = $bunny;
 
         return $bunny;
     }
@@ -1275,5 +1286,15 @@ class Jars implements contract\Client
         }
 
         return intval($number);
+    }
+
+    private function db_version(): string
+    {
+        return $this->filesystem->get($this->current_version_file()) ?? hash('sha256', 'jars');
+    }
+
+    private function current_version_file(): string
+    {
+        return $this->db_path('version.dat');
     }
 }
