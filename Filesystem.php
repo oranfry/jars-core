@@ -26,6 +26,12 @@ class Filesystem
     {
         if ($this->auto_persist)  {
             $this->persist();
+        } elseif (!$this->read_only) {
+            foreach ($this->store as $file => $details) {
+                if ($details->dirty) {
+                    error_log(spl_object_id($this) .  ' Lossy filesystem destruction: ' . $file);
+                }
+            }
         }
     }
 
