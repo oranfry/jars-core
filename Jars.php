@@ -547,11 +547,13 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->reports_version();
-
-        return $this
+        $group = $this
             ->report($report)
             ->get($group, $min_version === true ? $this->head : ($min_version ?: null));
+
+        $this->head = $this->reports_version();
+
+        return $group;
     }
 
     public function groups(string $report, string $prefix = '', string|bool|null $min_version = null): array
@@ -560,11 +562,13 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
+        $groups = $this
+            ->report($report)
+            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null), $version);
+
         $this->head = $this->reports_version();
 
-        return $this
-            ->report($report)
-            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
+        return $groups;
     }
 
     public function touch(): object
