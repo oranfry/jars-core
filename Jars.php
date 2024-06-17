@@ -564,7 +564,7 @@ class Jars implements contract\Client
 
         $groups = $this
             ->report($report)
-            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null), $version);
+            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
 
         $this->head = $this->reports_version();
 
