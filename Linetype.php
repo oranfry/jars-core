@@ -19,7 +19,7 @@ class Linetype
 
     private $jars;
 
-    private static $incoming_inlines = null;
+    private static $incoming_inlines = [];
     private static $incoming_links = [];
     private static $known = [];
 
@@ -136,24 +136,55 @@ class Linetype
         if (!isset(self::$incoming_links[$this->jars->token()])) {
             self::$incoming_links[$this->jars->token()] = [];
 
-            foreach ($this->jars->config()->linetypes() as $name => $class) {
+            $linetypes = $this->jars->config()->linetypes();
+
+            foreach ($linetypes as $name => $class) {
                 $linetype = $this->jars->linetype($name);
 
                 foreach ($linetype->children as $child) {
                     $link = clone $child;
                     $link->parent_linetype = $name;
-                    self::$incoming_links[$this->jars->token()][$child->linetype][] = $link;
+
+                    self::$incoming_links[$this->jars->token()][$link->linetype][] = $link;
+                }
+            }
+
+            foreach ($linetypes as $name => $class) {
+                $linetype = $this->jars->linetype($name);
+
+                foreach ($linetype->children as $child) {
+                    if (@$child->only_parent) {
+                        $link = (object) array_filter([
+                            'tablelink' => $child->tablelink,
+                            'reverse' => !($child->reverse ?? false),
+                            'linetype' => $name,
+                            'parent_linetype' => $child->linetype,
+                        ]);
+
+                        foreach (self::$incoming_links[$this->jars->token()][$name] ?? [] as $_link) {
+                            if (
+                                $link->tablelink === $_link->tablelink
+                                && ($link->reverse ?? false) === ($_link->reverse ?? false)
+                                && $link->linetype === $_link->linetype
+                                && $link->parent_linetype === $_link->parent_linetype
+                            ) {
+                                continue 2;
+                            }
+                        }
+
+                        self::$incoming_links[$this->jars->token()][$link->linetype][] = $link;
+                    }
                 }
             }
         }
 
-        return @self::$incoming_links[$this->jars->token()][$this->name] ?? [];
+        return self::$incoming_links[$this->jars->token()][$this->name] ?? [];
     }
 
     public final function find_incoming_inlines()
     {
-        if (self::$incoming_inlines === null) {
-            self::$incoming_inlines = [];
+        if (!isset(self::$incoming_inlines[$this->jars->token()])) {
+            self::$incoming_inlines[$this->jars->token()] = [];
 
             foreach ($this->jars->config()->linetypes() as $name => $class) {
                 $linetype = $this->jars->linetype($name);
@@ -162,16 +193,12 @@ class Linetype
                     $link = clone $child;
                     $link->parent_linetype = $name;
 
-                    if (!isset(self::$incoming_inlines[$child->linetype])) {
-                        self::$incoming_inlines[$child->linetype] = [];
-                    }
-
-                    self::$incoming_inlines[$child->linetype][] = $link;
+                    self::$incoming_inlines[$this->jars->token()][$link->linetype][] = $link;
                 }
             }
         }
 
-        return @self::$incoming_inlines[$this->name] ?: [];
+        return self::$incoming_inlines[$this->jars->token()][$this->name] ?? [];
     }
 
     public function get(?string $token, string $id, &$inlines = [])

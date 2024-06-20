@@ -1081,20 +1081,20 @@ class Jars implements contract\Client
     private function propagate_r(string $table, string $id, string $version, array &$changes = [], array &$seen = []): void
     {
         foreach ($this->find_table_linetypes($table) as $linetype) {
-            $relatives = array_merge(
+            $relationships = array_merge(
                 $linetype->find_incoming_links(),
                 $linetype->find_incoming_inlines(),
             );
 
-            foreach ($relatives as $relative) {
+            foreach ($relationships as $relationship) {
                 $links = [
-                    Link::of($this, $relative->tablelink, $id, !@$relative->reverse, $version),
-                    Link::of($this, $relative->tablelink, $id, !@$relative->reverse)
+                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse, $version),
+                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)
                 ];
 
                 foreach ($links as $link) {
                     foreach ($link->relatives() as $relative_id) {
-                        $relative_linetype = $this->linetype($relative->parent_linetype);
+                        $relative_linetype = $this->linetype($relationship->parent_linetype);
                         $table = $relative_linetype->table;
 
                         if (!Record::of($this, $table, $relative_id)->exists()) {
@@ -1110,10 +1110,10 @@ class Jars implements contract\Client
                             $changes[$relative_id] = $change;
                         }
 
-                        if (!isset($seen[$key = $relative->parent_linetype . ':' . $relative_id])) {
+                        if (!isset($seen[$key = $relationship->parent_linetype . ':' . $relative_id])) {
                             $seen[$key] = true;
 
-                            $this->propagate_r($relative->parent_linetype, $relative_id, $version, $changes, $seen);
+                            $this->propagate_r($relationship->parent_linetype, $relative_id, $version, $changes, $seen);
                         }
                     }
                 }
