@@ -1110,10 +1110,10 @@ class Jars implements contract\Client
                             $changes[$relative_id] = $change;
                         }
 
-                        if (!isset($seen[$key = $relationship->parent_linetype . ':' . $relative_id])) {
+                        if (!isset($seen[$key = $table . ':' . $relative_id])) {
                             $seen[$key] = true;
 
-                            $this->propagate_r($relationship->parent_linetype, $relative_id, $version, $changes, $seen);
+                            $this->propagate_r($table, $relative_id, $version, $changes, $seen);
                         }
                     }
                 }
