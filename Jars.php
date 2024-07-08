@@ -221,11 +221,15 @@ class Jars implements contract\Client
                     Link::of($this, $affected->tablelink, $affected->right, true)
                         ->add($affected->left)
                         ->save();
+
+                    $meta[] = '>' . $affected->tablelink . ':' . $affected->left . ',' . $affected->right;
+
                     break;
 
                 case 'delete':
                     $affected->oldrecord->delete();
                     $meta[] = '-' . $affected->table . ':' . $affected->id;
+
                     break;
 
                 case 'disconnect':
@@ -236,6 +240,9 @@ class Jars implements contract\Client
                     Link::of($this, $affected->tablelink, $affected->right, true)
                         ->remove($affected->left)
                         ->save();
+
+                    $meta[] = '<' . $affected->tablelink . ':' . $affected->left . ',' . $affected->right;
+
                     break;
 
                 case 'save':
@@ -358,28 +365,39 @@ class Jars implements contract\Client
         return $this->import(date('Y-m-d H:i:s'), $lines, $base_version);
     }
 
-    private function commit(string $timestamp, array $data, array $meta, ?string $base_version): void
+    private function commit(string $timestamp, array $commits, array $meta, ?string $base_version): void
     {
-        foreach ($data as $id => $commit) {
+        foreach ($commits as $id => $commit) {
             if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
-                unset($data[$id]);
+                unset($commits[$id]);
             }
         }
 
-        if (!count($data)) {
+        if (!count($commits)) {
             return;
         }
 
-        $has_updates = array_reduce($meta, fn ($carrie, $mathison) => $carrie || substr($mathison, 0, 1) !== '+');
+        $nonadd_meta = array_filter($meta, fn ($change) => substr($change, 0, 1) !== '+');
+
+        $modified_ids = array_unique(array_merge(...array_map(fn ($change) => explode(
+            ',',
+            preg_replace('/.*:/', '', $change),
+        ), $nonadd_meta)));
 
         @mkdir($version_dir = $this->db_home . '/versions', 0777, true);
 
         $master_record_file = $this->db_home . '/master.dat';
         $master_meta_file = $master_record_file . '.meta';
 
+        if ($modified_ids && !$base_version) {
+            throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: none");
+        }
+
         if ($i_lock = !isset($this->locker_pin)) {
             $this->lock();
         }
+
+        // we have the floor!
 
         $this->head = $this->db_version();
 
@@ -387,17 +405,25 @@ class Jars implements contract\Client
 
         // complain if this would cause concurrent modification
 
-        if ($has_updates && $base_version !== $this->head) {
-            if ($i_lock) {
-                $this->unlock_internal();
-            }
+        if ($modified_ids && $base_version !== $this->head) {
+            $from = $this->version_number_of($base_version) + 1;
+            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'`));
 
-            throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
+            $comodified_ids = array_map(
+                fn ($change) => preg_replace('/.*:/', '', $change),
+                array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
+            );
+
+            if (array_intersect($comodified_ids, $modified_ids)) {
+                if ($i_lock) {
+                    $this->unlock_internal();
+                }
+
+                throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
+            }
         }
 
-        // we have the floor!
-
-        $master_export = $timestamp . ' ' . json_encode(array_values($data), JSON_UNESCAPED_SLASHES);
+        $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
         $meta_export = implode(' ', $meta);
 
         $this->head = hash('sha256', $this->head . $master_export);
@@ -771,7 +797,12 @@ class Jars implements contract\Client
         $changes = [];
 
         foreach ($metas as $meta) {
-            if (!preg_match('/^([+-~])([a-z]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
+            if (preg_match('/^[<>]/', $meta, $matches)) {
+                // connection or disconnection
+                continue;
+            }
+
+            if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
                 throw new Exception('Invalid meta line: ' . $meta);
             }
 

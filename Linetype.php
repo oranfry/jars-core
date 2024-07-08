@@ -270,6 +270,13 @@ class Linetype
 
             if (!@$line->id) { // Add
                 $line->id = $this->jars->takeanumber();
+                $verb = '+';
+            } else {
+                $verb = '~';
+            }
+
+            if ($logging !== null) {
+                echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
             $record = $oldrecord ? (clone $oldrecord) : Record::of($this->jars, $this->table);
@@ -296,6 +303,10 @@ class Linetype
 
             $oldrecord->assertExistence();
 
+            if ($logging !== null) {
+                echo str_repeat(' ', $logging * 4) . '-[' . $this->table . ':' . $line->id . ']' . "\n";
+            }
+
             foreach ($this->find_incoming_links() as $parent) {
                 $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
 
@@ -306,6 +317,10 @@ class Linetype
                         'left' => (@$parent->reverse ? $line->id : $parent_id),
                         'right' => (@$parent->reverse ? $parent_id : $line->id),
                     ];
+
+                    if ($logging !== null) {
+                        echo str_repeat(' ', ($logging + 1) * 4) . "<[$parent->tablelink:$parent_id,$line->id]\n";
+                    }
                 }
             }
 
@@ -332,6 +347,10 @@ class Linetype
                             'left' => (@$child->reverse ? $child_id : $line->id),
                             'right' => (@$child->reverse ? $line->id : $child_id),
                         ];
+
+                        if ($logging !== null) {
+                            echo str_repeat(' ', ($logging + 1) * 4) . "<[$child->tablelink:$line->id,$child_id]\n";
+                        }
                     }
                 }
             }
@@ -373,6 +392,10 @@ class Linetype
                         'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
                         'oldlinks' => [],
                     ];
+
+                    if ($logging !== null) {
+                        echo str_repeat(' ', ($logging + 1) * 4) . "<[$parent->tablelink:{$oldline->$alias},$line->id]\n";
+                    }
                 }
 
                 if (@$line->$alias) {
@@ -390,14 +413,12 @@ class Linetype
                         'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
                         'oldlinks' => [],
                     ];
+
+                    if ($logging !== null) {
+                        echo str_repeat(' ', ($logging + 1) * 4) . ">[$parent->tablelink:{$line->$alias},$line->id]\n";
+                    }
                 }
             }
-        }
-
-        if ($logging !== null) {
-            $verb = !$is ? '-' : (@$line->given_id ? '~' : '+');
-
-            echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
         }
 
         // recurse to inline children
