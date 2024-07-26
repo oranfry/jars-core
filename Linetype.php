@@ -246,28 +246,24 @@ class Linetype
         if (@$line->id) {
             $line->given_id = $line->id;
             $oldrecord = Record::of($this->jars, $this->table, $line->id);
+            $oldline = $this->get($token, $line->id, $old_inlines);
+
+            foreach (array_diff(array_keys(get_object_vars($oldline)), ['id', 'type']) as $property) {
+                if (!property_exists($line, $property)) {
+                    $line->$property = $oldline->$property;
+                }
+            }
+        }
+
+        $this->complete($line);
+
+        if ($errors = $this->validate($line)) {
+            throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors));
         }
 
         $is = !property_exists($line, '_is') || $line->_is;
 
-        if ($is) {
-            // Add or Update
-            if (@$line->id) {
-                $oldline = $this->get($token, $line->id, $old_inlines);
-
-                foreach (array_diff(array_keys(get_object_vars($oldline)), ['id', 'type']) as $property) {
-                    if (!property_exists($line, $property)) {
-                        $line->$property = $oldline->$property;
-                    }
-                }
-            }
-
-            $this->complete($line);
-
-            if ($errors = $this->validate($line)) {
-                throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors));
-            }
-
+        if ($is) { // Add or Update
             if (!@$line->id) { // Add
                 $line->id = $this->jars->takeanumber();
                 $verb = '+';
@@ -295,8 +291,7 @@ class Linetype
                 'oldrecord' => $oldrecord,
                 'oldlinks' => [],
             ];
-        } else {
-            // Remove
+        } else { // Remove
             if (!@$line->id) {
                 throw new Exception("Missing id for deletion");
             }
