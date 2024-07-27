@@ -131,6 +131,79 @@ class Linetype
         ]]);
     }
 
+    public function equal($record_a, $record_b)
+    {
+        if (is_null($record_a) !== is_null($record_b)) {
+            return false;
+        }
+
+        $a_keys = array_keys(get_object_vars($record_a));
+        $b_keys = array_keys(get_object_vars($record_b));
+
+        if (array_diff($a_keys, $b_keys) || array_diff($b_keys, $a_keys)) {
+            return false;
+        }
+
+        foreach ($a_keys as $key) {
+            if ($record_a->$key !== $record_b->$key) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function fieldInfo(): array
+    {
+        $newline_fields = $this->jars->config()->respect_newline_fields()[$this->name] ?? [];
+        $download_fields = $this->jars->config()->download_fields()[$this->name] ?? [];
+        $float_dp = $this->jars->config()->float_dp()[$this->name] ?? [];
+
+        $fields = [(object) [
+            'name' => 'id',
+            'src' => 'builtin',
+            'type' => 'string',
+            'multiline' => false,
+        ]];
+
+        foreach (array_filter(array_map(fn ($link) => @$link->only_parent, $this->find_incoming_links())) as $parent_field) {
+            $fields[] = (object) [
+                'name' => $parent_field,
+                'src' => 'parent',
+                'type' => 'string',
+                'multiline' => false,
+            ];
+        }
+
+        foreach (['fields', 'borrow'] as $src) {
+            foreach ($this->$src as $name => $callback) {
+                $fieldTypeObject = (new ReflectionFunction($callback))->getReturnType();
+                $fieldType = ($fieldTypeObject ? $fieldTypeObject->getName() : 'string');
+
+                $fields[] = $field = (object) [
+                    'downloadable' => false,
+                    'multiline' => in_array($name, $newline_fields),
+                    'name' => $name,
+                    'src' => $src,
+                    'type' => $fieldType,
+                ];
+
+                if ($fieldType == 'float') {
+                    $field->dp = $float_dp[$name] ?? 0;
+                }
+
+                if ($download = @$download_fields[$name]) {
+                    $field->downloadable = true;
+                    $field->download_extension = @$download->extension;
+                    $field->download_icon = @$download->icon;
+                    $field->download_table = @$download->table;
+                }
+            }
+        }
+
+        return $fields;
+    }
+
     public final function find_incoming_links()
     {
         if (!isset(self::$incoming_links[$this->jars->token()])) {
@@ -222,15 +295,44 @@ class Linetype
         return $line;
     }
 
+    public function get_childset($token, string $id, string $property): array
+    {
+        $child = @array_values(array_filter($this->children, fn ($o) => $o->property == $property))[0];
+
+        if (!$child) {
+            throw new Exception('Could not find child property ' . $this->name . '->' . $property);
+        }
+
+        $childset = [];
+        $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
+
+        if ($child_ids = $link->relatives()) {
+            $childlinetype = $this->jars->linetype($child->linetype);
+
+            foreach ($child_ids as $child_id) {
+                $childset[] = $childlinetype->get($token, $child_id);
+            }
+        }
+
+        return $childset;
+    }
+
+    public function has($line, $child)
+    {
+        return false;
+    }
+
     public function import($token, Filesystem $original_filesystem, $timestamp, object $line, ?string $base_version, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null, bool $differential = false)
     {
         $this->jars->trigger('importline', $this->table);
 
-        if (!$differential) {
+        $clobber = !$differential && $this->is($line); // all deletes are differential saves
+
+        if ($clobber) {
             $fields = array_merge(
                 array_keys($this->fields),
                 array_keys($this->borrow),
-                array_filter(array_map(fn($l) => @$l->only_parent, $this->find_incoming_links()))
+                array_filter(array_map(fn ($l) => @$l->only_parent, $this->find_incoming_links()))
             );
 
             foreach ($fields as $field) {
@@ -261,7 +363,7 @@ class Linetype
             throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors));
         }
 
-        $is = !property_exists($line, '_is') || $line->_is;
+        $is = $this->is($line);
 
         if ($is) { // Add or Update
             if (!@$line->id) { // Add
@@ -362,7 +464,7 @@ class Linetype
 
         $this->strip_inline_children($line);
 
-        if (!property_exists($line, '_is') || $line->_is) { // Add or Update
+        if ($this->is($line)) { // Add or Update
             $this->unpack($line, $oldline, $old_inlines);
         }
 
@@ -531,6 +633,160 @@ class Linetype
         $commits[$line->id] = $commit;
     }
 
+    public function is(object $line): bool
+    {
+        return !property_exists($line, '_is') || $line->_is;
+    }
+
+    public function jars(?Jars $jars): null|Jars|self
+    {
+        if (func_num_args()) {
+            $this->jars = $jars;
+
+            return $this;
+        }
+
+        return $this->jars;
+    }
+
+    public function load_children(string $token, object $line, int $recursive = INF, array $ignorelinks = [])
+    {
+        foreach ($this->children as $child) {
+            if (in_array($child->tablelink, $ignorelinks)) {
+                continue;
+            }
+
+            $child_ignorelinks = array_merge($ignorelinks, [$child->tablelink]);
+            $line->{$child->property} = $this->get_childset($token, $line, $child->property);
+
+            if ($recursive > 0) {
+                foreach ($childset as $childline) {
+                    $childlinetype->load_children($token, $childline, $recursive - 1, $child_ignorelinks);
+                }
+            }
+        }
+    }
+
+    protected function load_r($token, $id, &$collected, $path = '/', $ignorelink = null)
+    {
+        $record = Record::of($this->jars, $this->table, $id);
+        $record->assertExistence();
+
+        $collected[$path] = $record;
+
+        // recurse to inline children
+
+        foreach (@$this->inlinelinks ?? [] as $child) {
+            if ($ignorelink && $child->tablelink == $ignorelink) {
+                continue;
+            }
+
+            if (!@$child->property) {
+                throw new Exception('Inline link without property');
+            }
+
+            $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
+            $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
+
+            if ($child_ids = $link->relatives()) {
+                $childlinetype = $this->jars->linetype($child->linetype);
+
+                foreach ($child_ids as $child_id) {
+                    $childlinetype->load_r($token, $child_id, $collected, $childpath, $child->tablelink);
+                }
+            }
+        }
+    }
+
+    public function null_empty(object $line, ...$fields)
+    {
+        foreach ($fields as $field) {
+            if (empty($line->$field)) {
+                $line->field = null;
+            }
+        }
+    }
+
+    public function only_parent_r(object $line, ?string $ignorelink = null)
+    {
+        foreach ($this->find_incoming_links() as $parent) {
+            if (!$alias = @$parent->only_parent) {
+                continue;
+            }
+
+            $line->$alias = null;
+            $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+
+            if (!$parent_id = $link->firstChild()) {
+                continue;
+            }
+
+            if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
+                throw new Exception('Parent [' . $parent_id . '] does not exist');
+            }
+
+            $line->$alias = $parent_id;
+        }
+
+        // recurse to inline children
+
+        foreach (@$this->inlinelinks ?? [] as $child) {
+            if ($child->tablelink == $ignorelink) {
+                continue;
+            }
+
+            if ($childline = @$line->{$child->property}) {
+                $this
+                    ->jars
+                    ->linetype($child->linetype)
+                    ->only_parent_r($childline, $child->tablelink);
+            }
+        }
+    }
+
+    private function pack_r($token, $records, $line, $path = '/', $ignorelink = null)
+    {
+        foreach (@$this->inlinelinks ?? [] as $child) {
+            if ($child->tablelink == $ignorelink) {
+                continue;
+            }
+
+            if (!@$child->property) {
+                throw new Exception('Inline link without property');
+            }
+
+            $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
+            $childlinetype = $this->jars->linetype($child->linetype);
+            $childrecords = static::records_subset($records, $childpath);
+
+            if ($childrecords) {
+                $line->{$child->property} = (object) array_map(function($callback) use ($childrecords) {
+                    return $callback($childrecords);
+                }, $childlinetype->fields);
+
+                $line->{$child->property}->id = $childrecords['/']->id;
+                $line->{$child->property}->type = $child->linetype;
+
+                $childlinetype->pack_r($token, $records, $line->{$child->property}, $childpath, $child->tablelink);
+            }
+        }
+    }
+
+    protected function records_subset($records, $prefix)
+    {
+        $subset = [];
+
+        foreach ($records as $path => $record) {
+            $pattern = '/^' . preg_quote($prefix, '/') . '\b/';
+
+            if (preg_match($pattern, $path)) {
+                $subset[preg_replace($pattern, '', $path) ?: '/'] = $record;
+            }
+        }
+
+        return $subset;
+    }
+
     public function recurse_to_children(
         Filesystem $original_filesystem,
         string $timestamp,
@@ -625,105 +881,6 @@ class Linetype
         }
     }
 
-    protected function load_r($token, $id, &$collected, $path = '/', $ignorelink = null)
-    {
-        $record = Record::of($this->jars, $this->table, $id);
-        $record->assertExistence();
-
-        $collected[$path] = $record;
-
-        // recurse to inline children
-
-        foreach (@$this->inlinelinks ?? [] as $child) {
-            if ($ignorelink && $child->tablelink == $ignorelink) {
-                continue;
-            }
-
-            if (!@$child->property) {
-                throw new Exception('Inline link without property');
-            }
-
-            $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
-
-            if ($child_ids = $link->relatives()) {
-                $childlinetype = $this->jars->linetype($child->linetype);
-
-                foreach ($child_ids as $child_id) {
-                    $childlinetype->load_r($token, $child_id, $collected, $childpath, $child->tablelink);
-                }
-            }
-        }
-    }
-
-    public function load_children(string $token, object $line, int $recursive = INF, array $ignorelinks = [])
-    {
-        foreach ($this->children as $child) {
-            if (in_array($child->tablelink, $ignorelinks)) {
-                continue;
-            }
-
-            $child_ignorelinks = array_merge($ignorelinks, [$child->tablelink]);
-            $line->{$child->property} = $this->get_childset($token, $line, $child->property);
-
-            if ($recursive > 0) {
-                foreach ($childset as $childline) {
-                    $childlinetype->load_children($token, $childline, $recursive - 1, $child_ignorelinks);
-                }
-            }
-        }
-    }
-
-    public function get_childset($token, string $id, string $property): array
-    {
-        $child = @array_values(array_filter($this->children, fn ($o) => $o->property == $property))[0];
-
-        if (!$child) {
-            throw new Exception('Could not find child property ' . $this->name . '->' . $property);
-        }
-
-        $childset = [];
-        $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
-
-        if ($child_ids = $link->relatives()) {
-            $childlinetype = $this->jars->linetype($child->linetype);
-
-            foreach ($child_ids as $child_id) {
-                $childset[] = $childlinetype->get($token, $child_id);
-            }
-        }
-
-        return $childset;
-    }
-
-    private function pack_r($token, $records, $line, $path = '/', $ignorelink = null)
-    {
-        foreach (@$this->inlinelinks ?? [] as $child) {
-            if ($child->tablelink == $ignorelink) {
-                continue;
-            }
-
-            if (!@$child->property) {
-                throw new Exception('Inline link without property');
-            }
-
-            $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $childlinetype = $this->jars->linetype($child->linetype);
-            $childrecords = static::records_subset($records, $childpath);
-
-            if ($childrecords) {
-                $line->{$child->property} = (object) array_map(function($callback) use ($childrecords) {
-                    return $callback($childrecords);
-                }, $childlinetype->fields);
-
-                $line->{$child->property}->id = $childrecords['/']->id;
-                $line->{$child->property}->type = $child->linetype;
-
-                $childlinetype->pack_r($token, $records, $line->{$child->property}, $childpath, $child->tablelink);
-            }
-        }
-    }
-
     public function save($lines): array
     {
         throw new Exception('Linetype::save() used');
@@ -736,32 +893,6 @@ class Linetype
         }
 
         return $this->jars->import(date('Y-m-d H:i:s'), $lines);
-    }
-
-    public function strip_children($line)
-    {
-        foreach ($this->children as $child) {
-            unset($line->{$child->property});
-        }
-    }
-
-    public function strip_inline_children($line)
-    {
-        $stripped = [];
-
-        foreach (@$this->inlinelinks ?? [] as $child) {
-            if (!@$child->property) {
-                throw new Exception('Inline link without property: ' . $this->name . ': ' .  $child->linetype);
-            }
-
-            if (@$line->{$child->property}) {
-                $stripped[$child->property] = $line->{$child->property};
-            }
-
-            unset($line->{$child->property});
-        }
-
-        return $stripped;
     }
 
     public function scrub($token, $line)
@@ -800,6 +931,32 @@ class Linetype
         }
     }
 
+    public function strip_children($line)
+    {
+        foreach ($this->children as $child) {
+            unset($line->{$child->property});
+        }
+    }
+
+    public function strip_inline_children($line)
+    {
+        $stripped = [];
+
+        foreach (@$this->inlinelinks ?? [] as $child) {
+            if (!@$child->property) {
+                throw new Exception('Inline link without property: ' . $this->name . ': ' .  $child->linetype);
+            }
+
+            if (@$line->{$child->property}) {
+                $stripped[$child->property] = $line->{$child->property};
+            }
+
+            unset($line->{$child->property});
+        }
+
+        return $stripped;
+    }
+
     public function unlink($token, $line, $from)
     {
         if (!$this->jars->verify_token($token)) {
@@ -824,155 +981,5 @@ class Linetype
         }
 
         return $errors;
-    }
-
-    public function has($line, $child)
-    {
-        return false;
-    }
-
-    public function equal($record_a, $record_b)
-    {
-        if (is_null($record_a) !== is_null($record_b)) {
-            return false;
-        }
-
-        $a_keys = array_keys(get_object_vars($record_a));
-        $b_keys = array_keys(get_object_vars($record_b));
-
-        if (array_diff($a_keys, $b_keys) || array_diff($b_keys, $a_keys)) {
-            return false;
-        }
-
-        foreach ($a_keys as $key) {
-            if ($record_a->$key !== $record_b->$key) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    public function fieldInfo(): array
-    {
-        $newline_fields = $this->jars->config()->respect_newline_fields()[$this->name] ?? [];
-        $download_fields = $this->jars->config()->download_fields()[$this->name] ?? [];
-        $float_dp = $this->jars->config()->float_dp()[$this->name] ?? [];
-
-        $fields = [(object) [
-            'name' => 'id',
-            'src' => 'builtin',
-            'type' => 'string',
-            'multiline' => false,
-        ]];
-
-        foreach (array_filter(array_map(fn ($link) => @$link->only_parent, $this->find_incoming_links())) as $parent_field) {
-            $fields[] = (object) [
-                'name' => $parent_field,
-                'src' => 'parent',
-                'type' => 'string',
-                'multiline' => false,
-            ];
-        }
-
-        foreach (['fields', 'borrow'] as $src) {
-            foreach ($this->$src as $name => $callback) {
-                $fieldTypeObject = (new ReflectionFunction($callback))->getReturnType();
-                $fieldType = ($fieldTypeObject ? $fieldTypeObject->getName() : 'string');
-
-                $fields[] = $field = (object) [
-                    'downloadable' => false,
-                    'multiline' => in_array($name, $newline_fields),
-                    'name' => $name,
-                    'src' => $src,
-                    'type' => $fieldType,
-                ];
-
-                if ($fieldType == 'float') {
-                    $field->dp = $float_dp[$name] ?? 0;
-                }
-
-                if ($download = @$download_fields[$name]) {
-                    $field->downloadable = true;
-                    $field->download_extension = @$download->extension;
-                    $field->download_icon = @$download->icon;
-                    $field->download_table = @$download->table;
-                }
-            }
-        }
-
-        return $fields;
-    }
-
-    protected function records_subset($records, $prefix)
-    {
-        $subset = [];
-
-        foreach ($records as $path => $record) {
-            $pattern = '/^' . preg_quote($prefix, '/') . '\b/';
-
-            if (preg_match($pattern, $path)) {
-                $subset[preg_replace($pattern, '', $path) ?: '/'] = $record;
-            }
-        }
-
-        return $subset;
-    }
-
-    public function jars(?Jars $jars): null|Jars|self
-    {
-        if (func_num_args()) {
-            $this->jars = $jars;
-
-            return $this;
-        }
-
-        return $this->jars;
-    }
-
-    public function null_empty(object $line, ...$fields)
-    {
-        foreach ($fields as $field) {
-            if (empty($line->$field)) {
-                $line->field = null;
-            }
-        }
-    }
-
-    public function only_parent_r(object $line, ?string $ignorelink = null)
-    {
-        foreach ($this->find_incoming_links() as $parent) {
-            if (!$alias = @$parent->only_parent) {
-                continue;
-            }
-
-            $line->$alias = null;
-            $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
-
-            if (!$parent_id = $link->firstChild()) {
-                continue;
-            }
-
-            if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
-                throw new Exception('Parent [' . $parent_id . '] does not exist');
-            }
-
-            $line->$alias = $parent_id;
-        }
-
-        // recurse to inline children
-
-        foreach (@$this->inlinelinks ?? [] as $child) {
-            if ($child->tablelink == $ignorelink) {
-                continue;
-            }
-
-            if ($childline = @$line->{$child->property}) {
-                $this
-                    ->jars
-                    ->linetype($child->linetype)
-                    ->only_parent_r($childline, $child->tablelink);
-            }
-        }
     }
 }
