@@ -6,14 +6,14 @@ use jars\contract\Exception;
 
 class Record
 {
-    private $data;
-    private $dirty = false;
-    private $extension = 'json';
-    private $jars;
-    private $format = 'json';
-    private $id;
-    private $table;
-    private $version;
+    private ?array $data = null;
+    private bool $dirty = false;
+    private ?string $extension = 'json';
+    private Jars $jars;
+    private ?string $format = 'json';
+    private ?string $id = null;
+    private string $table;
+    private ?string $version = null;
 
     public function __construct(Jars $jars, string $table, ?string $id = null, ?string $version = null)
     {
@@ -92,13 +92,16 @@ class Record
         return $this->export();
     }
 
-    private function export()
+    public function assertExistence()
     {
-        if ($this->format == 'binary') {
-            return $this->data['content'];
+        if (!$this->exists()) {
+            throw new Exception("import_r: No such record: {$this->table}/{$this->id}");
         }
+    }
 
-        return json_encode($this->data, JSON_UNESCAPED_SLASHES);
+    public function delete()
+    {
+        $this->jars->filesystem()->delete($this->file());
     }
 
     public function equals(self $another)
@@ -123,34 +126,33 @@ class Record
         return true;
     }
 
-    public function save()
-    {
-        if ($this->id === null) {
-            throw new Exception('Tried to save record without id');
-        }
-
-        if ($this->data === null || !$this->dirty) {
-            return;
-        }
-
-        $this->jars->filesystem()->put($this->file(), $this->export());
-    }
-
-    public function assertExistence()
-    {
-        if (!$this->exists()) {
-            throw new Exception("import_r: No such record: {$this->table}/{$this->id}");
-        }
-    }
-
     public function exists()
     {
         return $this->jars->filesystem()->has($this->file());
     }
 
-    public function delete()
+    private function export()
     {
-        $this->jars->filesystem()->delete($this->file());
+        if ($this->data === null) {
+            $this->load();
+        }
+
+        if ($this->format == 'binary') {
+            return $this->data['content'];
+        }
+
+        return json_encode($this->data, JSON_UNESCAPED_SLASHES);
+    }
+
+    private function file()
+    {
+        if (!$this->id) {
+            throw new Exception('Could not generate filename');
+        }
+
+        $version_path = $this->version ? 'past/' . $this->version : 'current';
+
+        return $this->jars->db_path($version_path . "/records/{$this->table}/{$this->id}" . ($this->extension ? '.' . $this->extension : null));
     }
 
     private function load()
@@ -171,19 +173,33 @@ class Record
         }
     }
 
-    private function file()
-    {
-        if (!$this->id) {
-            throw new Exception('Could not generate filename');
-        }
-
-        $version_path = $this->version ? 'past/' . $this->version : 'current';
-
-        return $this->jars->db_path($version_path . "/records/{$this->table}/{$this->id}" . ($this->extension ? '.' . $this->extension : null));
-    }
-
     public static function of(Jars $jars, string $table, string $id = null, ?string $version = null)
     {
         return new Record($jars, $table, $id, $version);
+    }
+
+    public function save()
+    {
+        if ($this->id === null) {
+            throw new Exception('Tried to save record without id');
+        }
+
+        if ($this->data === null || !$this->dirty) {
+            return;
+        }
+
+        $this->jars->filesystem()->put($this->file(), $this->export());
+    }
+
+    public function toArray(): array
+    {
+        if ($this->data === null) {
+            $this->load();
+        }
+
+        return array_merge(
+            ['id' => $this->id],
+            $this->data,
+        );
     }
 }

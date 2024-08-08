@@ -672,7 +672,7 @@ class Linetype
         $record = Record::of($this->jars, $this->table, $id);
         $record->assertExistence();
 
-        $collected[$path] = $record;
+        $collected[$path] = (object) $record->toArray();
 
         // recurse to inline children
 

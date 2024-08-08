@@ -49,7 +49,7 @@ class Filesystem
     public function put(string $file, $content)
     {
         if ($this->read_only) {
-            throw new Exception('Attempt made to modify to read-only filesystem');
+            throw new Exception('Attempt made to modify read-only filesystem');
         }
 
         $this->store[$file] = (object) [
@@ -70,7 +70,7 @@ class Filesystem
     public function delete(string $file)
     {
         if ($this->read_only) {
-            throw new Exception('Attempt made to modify to read-only filesystem');
+            throw new Exception('Attempt made to modify read-only filesystem');
         }
 
         $this->store[$file] = (object) [
@@ -159,7 +159,7 @@ class Filesystem
     public function append(string $file, $content)
     {
         if ($this->read_only) {
-            throw new Exception('Attempt made to modify to read-only filesystem');
+            throw new Exception('Attempt made to modify read-only filesystem');
         }
 
         if (!isset($this->store[$file])) {
