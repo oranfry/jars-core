@@ -40,149 +40,285 @@ class Jars implements contract\Client
         $this->filesystem = clone $this->filesystem;
     }
 
-    public static function validate_username(string $username): bool
+    private static function array_keys_recursive(array $array, string $separtor = '/'): array
     {
-        return
-            is_string($username)
-            && strlen($username) > 0
-            && (
-                preg_match('/^[a-z0-9_]+$/', $username)
-                || filter_var($username, FILTER_VALIDATE_EMAIL) !== false
+        $keys = [];
+
+        foreach ($array as $key => $element) {
+            if (is_array($element)) {
+                $keys = array_merge($keys, array_map(fn ($subkey) => $key . $separtor . $subkey, static::array_keys_recursive($element, $separtor)));
+            } else {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
+    }
+
+    private static function classifier_value($classify, $line): array
+    {
+        if (is_callable($classify)) {
+            $classify = ($classify)($line);
+        }
+
+        if (is_null($classify)) {
+            return [];
+        }
+
+        if (is_string($classify)) {
+            $classify = [$classify];
+        }
+
+        if (!is_array($classify)) {
+            throw new Exception('Could not resolve classification result to an array');
+        }
+
+        if ($wrong = array_filter($classify, fn ($group) => !is_string($group) || !preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group))) {
+            throw new Exception('Invalid classification results [' . implode(',', array_map(fn ($w) => json_encode($w, JSON_UNESCAPED_SLASHES), $wrong)) . ']');
+        }
+
+        return array_values($classify); // be forgiving of non-numeric or non-sequential indices
+    }
+
+    private function commit(string $timestamp, array $commits, array $meta, ?string $base_version): void
+    {
+        foreach ($commits as $id => $commit) {
+            if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
+                unset($commits[$id]);
+            }
+        }
+
+        if (!count($commits)) {
+            return;
+        }
+
+        $add_meta = array_filter($meta, fn ($change) => substr($change, 0, 1) === '+');
+        $nonadd_meta = array_filter($meta, fn ($change) => substr($change, 0, 1) !== '+');
+
+        $modified_ids = array_diff($this->meta_ids($nonadd_meta), $this->meta_ids($add_meta));
+
+        @mkdir($version_dir = $this->db_home . '/versions', 0777, true);
+
+        $master_record_file = $this->db_home . '/master.dat';
+        $master_meta_file = $master_record_file . '.meta';
+
+        if ($modified_ids && !$base_version) {
+            throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: none");
+        }
+
+        if ($i_lock = !isset($this->locker_pin)) {
+            $this->lock();
+        }
+
+        // we have the floor!
+
+        $this->head = $this->db_version();
+
+        $version_number = $this->version_number_of($this->head);
+
+        // complain if this would cause concurrent modification
+
+        if ($modified_ids && $base_version !== $this->head) {
+            $from = $this->version_number_of($base_version) + 1;
+            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'`));
+
+            $comodified_ids = array_map(
+                fn ($change) => preg_replace('/.*:/', '', $change),
+                array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
             );
+
+            if (array_intersect($comodified_ids, $modified_ids)) {
+                if ($i_lock) {
+                    $this->unlock_internal();
+                }
+
+                throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
+            }
+        }
+
+        $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
+        $meta_export = implode(' ', $meta);
+
+        $this->head = hash('sha256', $this->head . $master_export);
+
+        $this->filesystem->put($this->current_version_file(), $this->head);
+        $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
+        $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
+        $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
+
+        if ($i_lock) {
+            $this->unlock_internal();
+        }
     }
 
-    public static function validate_password(string $password): bool
+    public function config()
     {
-        return
-            is_string($password)
-            && strlen($password) > 5;
+        return $this->config;
     }
 
-    public function persist(): self
+    private function current_version_file(): string
     {
-        $this->filesystem->persist();
-
-        return $this;
+        return $this->db_path('version.dat');
     }
 
-    public function login(string $username, string $password, bool $one_time = false): ?string
+    public function db_path(?string $path = null): string
     {
-        $start = microtime(true) * 1e6;
+        return $this->db_home . ($path ? '/' . $path : null);
+    }
 
-        try {
-            if (!$this->validate_username($username)) {
-                throw new BadUsernameOrPasswordException('Invalid username');
+    private function db_version(): string
+    {
+        return $this->filesystem->get($this->current_version_file()) ?? hash('sha256', 'jars');
+    }
+
+    public function delete(string $linetype, string $id): array
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $this->head = $this->db_version();
+
+        return $this->linetype($linetype)->delete($id);
+    }
+
+    private function dredge_r(array $lines): array
+    {
+        $dredged = [];
+
+        foreach ($lines as $line) {
+            if (@$line->_is !== false) {
+                $_line = $this->linetype($line->type)->get($this->token, $line->id);
+            } else {
+                $_line = (object) [
+                    '_is' => false,
+                    'id' => $line->id,
+                    'type' => $line->type,
+                ];
             }
 
-            if (!$this->validate_password($password)) {
-                throw new BadUsernameOrPasswordException('Invalid password');
+            foreach (array_keys(get_object_vars($line)) as $key) {
+                if (is_array($line->$key)) {
+                    $_line->$key = $this->dredge_r($line->$key);
+                }
             }
 
-            if (!$this->config->credentialsCorrect($username, $password)) {
-                throw new BadUsernameOrPasswordException('Unknown username or incorrect password');
-            }
-        } catch (\Exception $e) {
-            $end = $start + (float) 1e5; // make sure failure always takes 0.1s
-            usleep(max(0, $end - microtime(true) * 1e6));
-
-            throw $e;
+            $dredged[] = $_line;
         }
 
-        $random_bits = bin2hex(openssl_random_pseudo_bytes(32));
-
-        $line = (object) [
-            'token' => $random_bits,
-            'ttl' => 86400,
-            'type' => 'token',
-            'used' => time(),
-        ];
-
-        $this->verified_tokens[$random_bits] = $line;
-
-        $this->token = $random_bits;
-
-        if ($one_time) {
-            return $this->token;
-        }
-
-        // convert token from one-time to persistent
-
-        list($line) = $this->save([$line]);
-        unset($this->verified_tokens[$random_bits]);
-
-        $this->verified_tokens[$this->token = $line->id . ':' . $random_bits] = $line;
-
-        return $this->token;
+        return $dredged;
     }
 
-    public function verify_token(string $token): object|false
+    public function fields(string $linetype): array
     {
-        if (isset($this->verified_tokens[$token])) {
-            return $this->verified_tokens[$token];
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
         }
 
-        if (!preg_match('/^([a-zA-Z0-9]+):([0-9a-f]{64})$/', $token, $groups)) {
-            return false;
-        }
-
-        // token deleted or never existed
-
-        [, $id, $random_bits] = $groups;
-
-        $time = microtime(true);
-
-        $line = null;
-
-        try {
-            $line = $this->linetype('token')->get(null, $id);
-        } catch (\Exception $e) {}
-
-        if (
-            !$line
-            || $line->token !== $random_bits
-            || $line->ttl + $line->used < time()
-        ) {
-            usleep(floor((0.5 + $time - microtime(true)) * 1000000)); // don't let on whether the line existed
-
-            return false;
-        }
-
-        $user = null;
-
-        if (@$line->user) {
-            $userfile = $this->db_home . '/current/records/users/' . $line->user . '.json';
-
-            if (!$this->filesystem->has($userfile)) {
-                throw new Exception('Token Verification Error 1', 500);
-            }
-
-            $user = json_decode($this->filesystem->get($userfile));
-        }
-
-        $token_object = (object) [
-            'id' => $line->id,
-            'token' => $line->token,
-            'user' => @$user->id,
-        ];
-
-        $this->verified_tokens[$token] = $token_object;
-
-        return $token_object;
+        return $this->linetype($linetype)->fieldInfo();
     }
 
-    public function logout(): bool
+    public function filesystem(?Filesystem $filesystem = null): null|Filesystem|self
     {
-        if (!$line = $this->verify_token($this->token)) {
-            return true;
+        if (func_num_args()) {
+            $this->filesystem = $filesystem;
+
+            return $this;
         }
 
-        $lines = $this->save([(object)[
-            'id' => $line->id,
-            'type' => 'token',
-            '_is' => false,
-        ]]);
+        return $this->filesystem;
+    }
 
-        return property_exists($token = reset($lines), '_is') && $token->_is === false;
+    public function find_table_linetypes(string $table): array
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $found = [];
+
+        foreach (array_keys($this->config->linetypes()) as $linetype_name) {
+            $linetype = $this->linetype($linetype_name);
+
+            if ($linetype->table === $table) {
+                $found[] = $linetype;
+            }
+        }
+
+        return $found;
+    }
+
+    public function get(string $linetype, string $id): ?object
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $this->head = $this->db_version();
+
+        $line = $this->linetype($linetype)->get($this->token, $id);
+
+        if (!$line) {
+            return null;
+        }
+
+        return $line;
+    }
+
+    public function get_childset(string $linetype, string $id, string $property): array
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        return $this->linetype($linetype)->get_childset($this->token, $id, $property);
+    }
+
+    public function group(string $report, string $group = '', string|bool|null $min_version = null)
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $group = $this
+            ->report($report)
+            ->get($group, $min_version === true ? $this->head : ($min_version ?: null));
+
+        $this->head = $this->reports_version();
+
+        return $group;
+    }
+
+    public function groups(string $report, string $prefix = '', string|bool|null $min_version = null): array
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $groups = $this
+            ->report($report)
+            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
+
+        $this->head = $this->reports_version();
+
+        return $groups;
+    }
+
+    public function h2n(string $h, int $max = INF): ?int
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $sequence = $this->config->sequence();
+
+        for ($n = 1; $n <= $max; $n++) {
+            if ($this->n2h($n) == $h) {
+                return $n;
+            }
+        }
+
+        return null;
     }
 
     public function import(string $timestamp, array $lines, ?string $base_version = null, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
@@ -271,56 +407,6 @@ class Jars implements contract\Client
         return $updated;
     }
 
-    public function lock(): false|string
-    {
-        if ($this->touch_handle) {
-            throw new Exception('Attempt to lock when already locked');
-        }
-
-        @mkdir($this->db_home, 0777, true);
-
-        // TODO: Implement timeout using non-blocking locking in a loop until
-
-        if (!($this->touch_handle = fopen($this->db_home . '/touch.dat', 'a'))) {
-            throw new Exception('Could not open the touch file');
-        }
-
-        if (!flock($this->touch_handle, LOCK_EX)) {
-            fclose($this->touch_handle);
-
-            $this->touch_handle = null;
-
-            throw new Exception('Could not acquire a lock over the touch file');
-        }
-
-        return $this->locker_pin = bin2hex(random_bytes(32));
-    }
-
-    private function unlock_internal(): void
-    {
-        $this->unlock($this->locker_pin);
-    }
-
-    public function unlock(string $locker_pin): void
-    {
-        if (!$this->touch_handle) {
-            throw new Exception('Attempt to unlock when not locked');
-        }
-
-        if ($this->locker_pin !== $locker_pin) {
-            throw new Exception('Incorrect locker PIN provided for unlocking');
-        }
-
-        $this->filesystem->persist()->reset();
-
-        ftruncate($this->touch_handle, 0);
-        fwrite($this->touch_handle, microtime(true));
-        fclose($this->touch_handle);
-
-        $this->touch_handle = null;
-        $this->locker_pin = null;
-    }
-
     public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, ?string $base_version, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
     {
         if (!$this->verify_token($this->token())) {
@@ -352,278 +438,6 @@ class Jars implements contract\Client
         return $lines;
     }
 
-    public function save(array $lines, ?string $base_version = null): array
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        if (!$lines) {
-            return $lines;
-        }
-
-        return $this->import(date('Y-m-d H:i:s'), $lines, $base_version);
-    }
-
-    private function commit(string $timestamp, array $commits, array $meta, ?string $base_version): void
-    {
-        foreach ($commits as $id => $commit) {
-            if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
-                unset($commits[$id]);
-            }
-        }
-
-        if (!count($commits)) {
-            return;
-        }
-
-        $nonadd_meta = array_filter($meta, fn ($change) => substr($change, 0, 1) !== '+');
-
-        $modified_ids = array_unique(array_merge(...array_map(fn ($change) => explode(
-            ',',
-            preg_replace('/.*:/', '', $change),
-        ), $nonadd_meta)));
-
-        @mkdir($version_dir = $this->db_home . '/versions', 0777, true);
-
-        $master_record_file = $this->db_home . '/master.dat';
-        $master_meta_file = $master_record_file . '.meta';
-
-        if ($modified_ids && !$base_version) {
-            throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: none");
-        }
-
-        if ($i_lock = !isset($this->locker_pin)) {
-            $this->lock();
-        }
-
-        // we have the floor!
-
-        $this->head = $this->db_version();
-
-        $version_number = $this->version_number_of($this->head);
-
-        // complain if this would cause concurrent modification
-
-        if ($modified_ids && $base_version !== $this->head) {
-            $from = $this->version_number_of($base_version) + 1;
-            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'`));
-
-            $comodified_ids = array_map(
-                fn ($change) => preg_replace('/.*:/', '', $change),
-                array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
-            );
-
-            if (array_intersect($comodified_ids, $modified_ids)) {
-                if ($i_lock) {
-                    $this->unlock_internal();
-                }
-
-                throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
-            }
-        }
-
-        $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
-        $meta_export = implode(' ', $meta);
-
-        $this->head = hash('sha256', $this->head . $master_export);
-
-        $this->filesystem->put($this->current_version_file(), $this->head);
-        $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
-        $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
-        $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
-
-        if ($i_lock) {
-            $this->unlock_internal();
-        }
-    }
-
-    public function h2n(string $h): ?int
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $sequence = $this->config->sequence();
-
-        for ($n = 1; $n <= $sequence->max(); $n++) {
-            if ($this->n2h($n) == $h) {
-                return $n;
-            }
-        }
-
-        return null;
-    }
-
-    public function n2h(int $n): string
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $sequence = $this->config->sequence();
-
-        $banned = array_unique(array_merge($sequence->banned_chars(), ['+', '/', '=']));
-        $subs = $sequence->subs();
-
-        if (isset($subs[$n])) {
-            return $subs[$n];
-        }
-
-        $id = substr(str_replace($banned, '', base64_encode(hex2bin(hash('sha256', $n . '--' . $sequence->secret())))), 0, $sequence->size());
-
-        if ($transform = $sequence->transform()) {
-            $id = call_user_func($transform, $id);
-        }
-
-        return $id;
-    }
-
-    public function masterlog_check(): void
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $master_record_file = $this->db_home . '/master.dat';
-        $master_meta_file = $master_record_file . '.meta';
-
-        if (!touch($master_record_file) || !is_writable($master_record_file)) {
-            throw new Exception('Master record file not writable');
-        }
-
-        if (!touch($master_meta_file) || !is_writable($master_meta_file)) {
-            throw new Exception('Master meta file not writable');
-        }
-    }
-
-    public function delete(string $linetype, string $id): array
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $this->head = $this->db_version();
-
-        return $this->linetype($linetype)->delete($id);
-    }
-
-    public function fields(string $linetype): array
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        return $this->linetype($linetype)->fieldInfo();
-    }
-
-    public function get(string $linetype, string $id): ?object
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $this->head = $this->db_version();
-
-        $line = $this->linetype($linetype)->get($this->token, $id);
-
-        if (!$line) {
-            return null;
-        }
-
-        return $line;
-    }
-
-    public function preview(array $lines, ?string $base_version = null): array
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        if (!$lines) {
-            return $lines;
-        }
-
-        return $this->import(date('Y-m-d H:i:s'), $lines, $base_version, true);
-    }
-
-    public function record(string $table, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $tableinfo = $this->config->tables()[$table] ?? null;
-        $ext = $tableinfo->extension ?? 'json';
-        $filename = $id . ($ext ? '.' . $ext : null);
-        $content_type = $tableinfo->content_type ?? 'application/json';
-
-        if (!is_file($file = $this->db_path('current/records/' . $table . '/' . $filename))) {
-            return null;
-        }
-
-        $this->head = $this->db_version();
-
-        return file_get_contents($file);
-    }
-
-    public function group(string $report, string $group = '', string|bool|null $min_version = null)
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $group = $this
-            ->report($report)
-            ->get($group, $min_version === true ? $this->head : ($min_version ?: null));
-
-        $this->head = $this->reports_version();
-
-        return $group;
-    }
-
-    public function groups(string $report, string $prefix = '', string|bool|null $min_version = null): array
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $groups = $this
-            ->report($report)
-            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
-
-        $this->head = $this->reports_version();
-
-        return $groups;
-    }
-
-    public function touch(): object
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $this->head = $this->db_version();
-
-        return (object) [
-            'timestamp' => time(),
-        ];
-    }
-
-    public function version(): ?string
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        return $this->head;
-    }
-
-    public function config()
-    {
-        return $this->config;
-    }
-
     public function linetype(string $name): object
     {
         if (!isset($this->known['linetypes'][$name])) {
@@ -648,75 +462,234 @@ class Jars implements contract\Client
         return $this->known['linetypes'][$name];
     }
 
-    public function report(string $name): object
+    public function linetypes(?string $report = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        if (!isset($this->known['reports'][$name])) {
-            $reportclass = $this->config->reports()[$name] ?? null;
-
-            if (!$reportclass) {
-                throw new Exception("No such report '{$name}'");
+        if ($report) {
+            if (!array_key_exists($report, $this->config->reports())) {
+                throw new Exception('No such report [' . $report . ']');
             }
 
-            $report = new $reportclass();
-            $report->name = $name;
+            $names = [];
 
-            $report->jars($this);
-            $report->filesystem($this->filesystem());
+            foreach ($this->report($report)->listen as $key => $value) {
+                $name = is_string($value) ? $value : $key;
 
-            if (method_exists($report, 'init')) {
-                $report->init($token);
+                if (!preg_match('/^report:/', $name)) {
+                    $names[] = $name;
+                }
+            }
+        } else {
+            $names = array_keys($this->config->linetypes());
+        }
+
+        sort($names);
+
+        $linetypes = array_map(fn ($name) => (object) [
+            'name' => $name,
+            'fields' => $this->fields($name),
+        ], $names);
+
+        return $linetypes;
+    }
+
+    public function listen(Listener $listener): void
+    {
+        $this->listeners[] = $listener;
+    }
+
+    private function load_children_r(object $line, array $children, array &$childsets): void
+    {
+        foreach ($children as $property => $child) {
+            if (is_numeric($property)) {
+                $property = $child;
+                $child = (object) [];
             }
 
-            $this->known['reports'][$name] = $report;
-        }
+            if (!isset($childsets[$line->type])) {
+                $childsets[$line->type] = [];
+            }
 
-        return $this->known['reports'][$name];
+            $linetype_childsets = &$childsets[$line->type];
+
+            if (!isset($linetype_childsets[$line->id])) {
+                $linetype_childsets[$line->id] = [];
+            }
+
+            $line_childsets = &$linetype_childsets[$line->id];
+
+            if (!isset($line_childsets[$property])) {
+                $line_childsets[$property] = $this->get_childset($line->type, $line->id, $property);
+            }
+
+            $childset = $line_childsets[$property];
+
+            if (property_exists($child, 'filter')) {
+                if (!is_callable($child->filter)) {
+                    throw new Exception('Invalid filter');
+                }
+
+                $childset = array_filter($childset, $child->filter);
+            }
+
+            if (property_exists($child, 'children')) {
+                if (!is_array($child->children)) {
+                    throw new Exception('Invalid children');
+                }
+
+                foreach ($childset as $childline) {
+                    $this->load_children_r($childline, $child->children, $childsets);
+                }
+            }
+
+            if (property_exists($child, 'latefilter')) {
+                if (!is_callable($child->latefilter)) {
+                    throw new Exception('Invalid filter');
+                }
+
+                $childset = array_filter($childset, $child->latefilter);
+            }
+
+            if (property_exists($child, 'sorter')) {
+                if (!is_callable($child->sorter)) {
+                    throw new Exception('Invalid sorter');
+                }
+
+                usort($childset, $child->sorter);
+            }
+
+            $line->$property = array_values($childset);
+        }
     }
 
-    public function takeanumber(): string
+    public function lock(): false|string
     {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
+        if ($this->touch_handle) {
+            throw new Exception('Attempt to lock when already locked');
         }
 
-        $pointer_file = $this->db_home . '/pointer.dat';
-        $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
+        @mkdir($this->db_home, 0777, true);
 
-        $this->trigger('takeanumber', $pointer, $id);
-        $this->filesystem->put($pointer_file, $pointer + 1);
+        // TODO: Implement timeout using non-blocking locking in a loop until
 
-        return $id;
+        if (!($this->touch_handle = fopen($this->db_home . '/touch.dat', 'a'))) {
+            throw new Exception('Could not open the touch file');
+        }
+
+        if (!flock($this->touch_handle, LOCK_EX)) {
+            fclose($this->touch_handle);
+
+            $this->touch_handle = null;
+
+            throw new Exception('Could not acquire a lock over the touch file');
+        }
+
+        return $this->locker_pin = bin2hex(random_bytes(32));
     }
 
-    public function filesystem(?Filesystem $filesystem = null): null|Filesystem|self
+    public function login(string $username, string $password, bool $one_time = false): ?string
     {
-        if (func_num_args()) {
-            $this->filesystem = $filesystem;
+        $start = microtime(true) * 1e6;
 
-            return $this;
+        try {
+            if (!$this->validate_username($username)) {
+                throw new BadUsernameOrPasswordException('Invalid username');
+            }
+
+            if (!$this->validate_password($password)) {
+                throw new BadUsernameOrPasswordException('Invalid password');
+            }
+
+            if (!$this->config->credentialsCorrect($username, $password)) {
+                throw new BadUsernameOrPasswordException('Unknown username or incorrect password');
+            }
+        } catch (\Exception $e) {
+            $end = $start + (float) 1e5; // make sure failure always takes 0.1s
+            usleep(max(0, $end - microtime(true) * 1e6));
+
+            throw $e;
         }
 
-        return $this->filesystem;
-    }
+        $random_bits = bin2hex(openssl_random_pseudo_bytes(32));
 
-    public function token(?string $token = null): self|string|null
-    {
-        if (func_num_args()) {
-            $this->token = $token;
+        $line = (object) [
+            'token' => $random_bits,
+            'ttl' => 86400,
+            'type' => 'token',
+            'used' => time(),
+        ];
 
-            return $this;
+        $this->verified_tokens[$random_bits] = $line;
+
+        $this->token = $random_bits;
+
+        if ($one_time) {
+            return $this->token;
         }
+
+        // convert token from one-time to persistent
+
+        list($line) = $this->save([$line]);
+        unset($this->verified_tokens[$random_bits]);
+
+        $this->verified_tokens[$this->token = $line->id . ':' . $random_bits] = $line;
 
         return $this->token;
     }
 
-    public function db_path(?string $path = null): string
+    public function logout(): bool
     {
-        return $this->db_home . ($path ? '/' . $path : null);
+        if (!$line = $this->verify_token($this->token)) {
+            return true;
+        }
+
+        $lines = $this->save([(object)[
+            'id' => $line->id,
+            'type' => 'token',
+            '_is' => false,
+        ]]);
+
+        return property_exists($token = reset($lines), '_is') && $token->_is === false;
+    }
+
+    public function masterlog_check(): void
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $master_record_file = $this->db_home . '/master.dat';
+        $master_meta_file = $master_record_file . '.meta';
+
+        if (!touch($master_record_file) || !is_writable($master_record_file)) {
+            throw new Exception('Master record file not writable');
+        }
+
+        if (!touch($master_meta_file) || !is_writable($master_meta_file)) {
+            throw new Exception('Master meta file not writable');
+        }
+    }
+
+    private function meta_ids(array $meta): array
+    {
+        return array_unique(array_merge(...array_map(fn ($change) => explode(
+            ',',
+            preg_replace('/.*:/', '', $change),
+        ), $meta)));
+    }
+
+    public function n2h(int $n): string
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $sequence = $this->config->sequence();
+
+        return hash('sha256', hex2bin(hash('sha256', $n . '--' . $sequence->secret())));
     }
 
     public static function of(Config $config, string $db_home): self
@@ -724,34 +697,87 @@ class Jars implements contract\Client
         return new Jars($config, $db_home);
     }
 
-    public function get_childset(string $linetype, string $id, string $property): array
+    public function persist(): self
+    {
+        $this->filesystem->persist();
+
+        return $this;
+    }
+
+    public function preview(array $lines, ?string $base_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        return $this->linetype($linetype)->get_childset($this->token, $id, $property);
+        if (!$lines) {
+            return $lines;
+        }
+
+        return $this->import(date('Y-m-d H:i:s'), $lines, $base_version, true);
     }
 
-    private function reports_version_file(): string
+    private function propagate_r(string $table, string $id, string $version, array &$changes = [], array &$seen = []): void
     {
-        return $this->db_path('reports/version.dat');
+        foreach ($this->find_table_linetypes($table) as $linetype) {
+            $relationships = array_merge(
+                $linetype->find_incoming_links(),
+                $linetype->find_incoming_inlines(),
+            );
+
+            foreach ($relationships as $relationship) {
+                $links = [
+                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse, $version),
+                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)
+                ];
+
+                foreach ($links as $link) {
+                    foreach ($link->relatives() as $relative_id) {
+                        $relative_linetype = $this->linetype($relationship->parent_linetype);
+                        $table = $relative_linetype->table;
+
+                        if (!Record::of($this, $table, $relative_id)->exists()) {
+                            continue;
+                        }
+
+                        $change = (object) [
+                            'table' => $table,
+                            'sign' => '*',
+                        ];
+
+                        if (!isset($changes[$relative_id])) {
+                            $changes[$relative_id] = $change;
+                        }
+
+                        if (!isset($seen[$key = $table . ':' . $relative_id])) {
+                            $seen[$key] = true;
+
+                            $this->propagate_r($table, $relative_id, $version, $changes, $seen);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    private function reports_version(&$as_number = null, &$file = null): ?string
+    public function record(string $table, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
     {
-        $file = $this->reports_version_file();
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
 
-        if (!$this->filesystem->has($file)) {
-            $as_number = 0;
+        $tableinfo = $this->config->tables()[$table] ?? null;
+        $ext = $tableinfo->extension ?? 'json';
+        $filename = $id . ($ext ? '.' . $ext : null);
+        $content_type = $tableinfo->content_type ?? 'application/json';
 
+        if (!is_file($file = $this->db_path('current/records/' . $table . '/' . $filename))) {
             return null;
         }
 
-        $version = $this->filesystem->get($file);
-        $as_number = (int) $this->filesystem->get($this->db_path('versions/' . $version));
+        $this->head = $this->db_version();
 
-        return $version;
+        return file_get_contents($file);
     }
 
     public function refresh(): string
@@ -1020,136 +1046,33 @@ class Jars implements contract\Client
         }
     }
 
-    private static function classifier_value($classify, $line): array
+    public function report(string $name): object
     {
-        if (is_callable($classify)) {
-            $classify = ($classify)($line);
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
         }
 
-        if (is_null($classify)) {
-            return [];
+        if (!isset($this->known['reports'][$name])) {
+            $reportclass = $this->config->reports()[$name] ?? null;
+
+            if (!$reportclass) {
+                throw new Exception("No such report '{$name}'");
+            }
+
+            $report = new $reportclass();
+            $report->name = $name;
+
+            $report->jars($this);
+            $report->filesystem($this->filesystem());
+
+            if (method_exists($report, 'init')) {
+                $report->init($token);
+            }
+
+            $this->known['reports'][$name] = $report;
         }
 
-        if (is_string($classify)) {
-            $classify = [$classify];
-        }
-
-        if (!is_array($classify)) {
-            throw new Exception('Could not resolve classification result to an array');
-        }
-
-        if ($wrong = array_filter($classify, fn ($group) => !is_string($group) || !preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group))) {
-            throw new Exception('Invalid classification results [' . implode(',', array_map(fn ($w) => json_encode($w, JSON_UNESCAPED_SLASHES), $wrong)) . ']');
-        }
-
-        return array_values($classify); // be forgiving of non-numeric or non-sequential indices
-    }
-
-    private function load_children_r(object $line, array $children, array &$childsets): void
-    {
-        foreach ($children as $property => $child) {
-            if (is_numeric($property)) {
-                $property = $child;
-                $child = (object) [];
-            }
-
-            if (!isset($childsets[$line->type])) {
-                $childsets[$line->type] = [];
-            }
-
-            $linetype_childsets = &$childsets[$line->type];
-
-            if (!isset($linetype_childsets[$line->id])) {
-                $linetype_childsets[$line->id] = [];
-            }
-
-            $line_childsets = &$linetype_childsets[$line->id];
-
-            if (!isset($line_childsets[$property])) {
-                $line_childsets[$property] = $this->get_childset($line->type, $line->id, $property);
-            }
-
-            $childset = $line_childsets[$property];
-
-            if (property_exists($child, 'filter')) {
-                if (!is_callable($child->filter)) {
-                    throw new Exception('Invalid filter');
-                }
-
-                $childset = array_filter($childset, $child->filter);
-            }
-
-            if (property_exists($child, 'children')) {
-                if (!is_array($child->children)) {
-                    throw new Exception('Invalid children');
-                }
-
-                foreach ($childset as $childline) {
-                    $this->load_children_r($childline, $child->children, $childsets);
-                }
-            }
-
-            if (property_exists($child, 'latefilter')) {
-                if (!is_callable($child->latefilter)) {
-                    throw new Exception('Invalid filter');
-                }
-
-                $childset = array_filter($childset, $child->latefilter);
-            }
-
-            if (property_exists($child, 'sorter')) {
-                if (!is_callable($child->sorter)) {
-                    throw new Exception('Invalid sorter');
-                }
-
-                usort($childset, $child->sorter);
-            }
-
-            $line->$property = array_values($childset);
-        }
-    }
-
-    private function propagate_r(string $table, string $id, string $version, array &$changes = [], array &$seen = []): void
-    {
-        foreach ($this->find_table_linetypes($table) as $linetype) {
-            $relationships = array_merge(
-                $linetype->find_incoming_links(),
-                $linetype->find_incoming_inlines(),
-            );
-
-            foreach ($relationships as $relationship) {
-                $links = [
-                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse, $version),
-                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)
-                ];
-
-                foreach ($links as $link) {
-                    foreach ($link->relatives() as $relative_id) {
-                        $relative_linetype = $this->linetype($relationship->parent_linetype);
-                        $table = $relative_linetype->table;
-
-                        if (!Record::of($this, $table, $relative_id)->exists()) {
-                            continue;
-                        }
-
-                        $change = (object) [
-                            'table' => $table,
-                            'sign' => '*',
-                        ];
-
-                        if (!isset($changes[$relative_id])) {
-                            $changes[$relative_id] = $change;
-                        }
-
-                        if (!isset($seen[$key = $table . ':' . $relative_id])) {
-                            $seen[$key] = true;
-
-                            $this->propagate_r($table, $relative_id, $version, $changes, $seen);
-                        }
-                    }
-                }
-            }
-        }
+        return $this->known['reports'][$name];
     }
 
     public function reports(): array
@@ -1187,70 +1110,77 @@ class Jars implements contract\Client
         return $reports;
     }
 
-    public function linetypes(?string $report = null): array
+    private function reports_version(&$as_number = null, &$file = null): ?string
+    {
+        $file = $this->reports_version_file();
+
+        if (!$this->filesystem->has($file)) {
+            $as_number = 0;
+
+            return null;
+        }
+
+        $version = $this->filesystem->get($file);
+        $as_number = (int) $this->filesystem->get($this->db_path('versions/' . $version));
+
+        return $version;
+    }
+
+    private function reports_version_file(): string
+    {
+        return $this->db_path('reports/version.dat');
+    }
+
+    public function save(array $lines, ?string $base_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        if ($report) {
-            if (!array_key_exists($report, $this->config->reports())) {
-                throw new Exception('No such report [' . $report . ']');
-            }
-
-            $names = [];
-
-            foreach ($this->report($report)->listen as $key => $value) {
-                $name = is_string($value) ? $value : $key;
-
-                if (!preg_match('/^report:/', $name)) {
-                    $names[] = $name;
-                }
-            }
-        } else {
-            $names = array_keys($this->config->linetypes());
+        if (!$lines) {
+            return $lines;
         }
 
-        sort($names);
-
-        $linetypes = array_map(fn ($name) => (object) [
-            'name' => $name,
-            'fields' => $this->fields($name),
-        ], $names);
-
-        return $linetypes;
+        return $this->import(date('Y-m-d H:i:s'), $lines, $base_version);
     }
 
-    private function dredge_r(array $lines): array
+    public function takeanumber(): string
     {
-        $dredged = [];
-
-        foreach ($lines as $line) {
-            if (@$line->_is !== false) {
-                $_line = $this->linetype($line->type)->get($this->token, $line->id);
-            } else {
-                $_line = (object) [
-                    '_is' => false,
-                    'id' => $line->id,
-                    'type' => $line->type,
-                ];
-            }
-
-            foreach (array_keys(get_object_vars($line)) as $key) {
-                if (is_array($line->$key)) {
-                    $_line->$key = $this->dredge_r($line->$key);
-                }
-            }
-
-            $dredged[] = $_line;
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
         }
 
-        return $dredged;
+        $pointer_file = $this->db_home . '/pointer.dat';
+        $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
+
+        $this->trigger('takeanumber', $pointer, $id);
+        $this->filesystem->put($pointer_file, $pointer + 1);
+
+        return $id;
     }
 
-    public function listen(Listener $listener): void
+    public function token(?string $token = null): self|string|null
     {
-        $this->listeners[] = $listener;
+        if (func_num_args()) {
+            $this->token = $token;
+
+            return $this;
+        }
+
+        return $this->token;
+    }
+
+    public function touch(): object
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $this->head = $this->db_version();
+
+        return (object) [
+            'timestamp' => time(),
+        ];
     }
 
     public function trigger(string $event, ...$arguments): void
@@ -1274,38 +1204,111 @@ class Jars implements contract\Client
         }
     }
 
-    private static function array_keys_recursive(array $array, string $separtor = '/'): array
+    public function unlock(string $locker_pin): void
     {
-        $keys = [];
-
-        foreach ($array as $key => $element) {
-            if (is_array($element)) {
-                $keys = array_merge($keys, array_map(fn ($subkey) => $key . $separtor . $subkey, static::array_keys_recursive($element, $separtor)));
-            } else {
-                $keys[] = $key;
-            }
+        if (!$this->touch_handle) {
+            throw new Exception('Attempt to unlock when not locked');
         }
 
-        return $keys;
+        if ($this->locker_pin !== $locker_pin) {
+            throw new Exception('Incorrect locker PIN provided for unlocking');
+        }
+
+        $this->filesystem->persist()->reset();
+
+        ftruncate($this->touch_handle, 0);
+        fwrite($this->touch_handle, microtime(true));
+        fclose($this->touch_handle);
+
+        $this->touch_handle = null;
+        $this->locker_pin = null;
     }
 
-    public function find_table_linetypes(string $table): array
+    private function unlock_internal(): void
+    {
+        $this->unlock($this->locker_pin);
+    }
+
+    public static function validate_password(string $password): bool
+    {
+        return
+            is_string($password)
+            && strlen($password) > 5;
+    }
+
+    public static function validate_username(string $username): bool
+    {
+        return
+            is_string($username)
+            && strlen($username) > 0
+            && (
+                preg_match('/^[a-z0-9_]+$/', $username)
+                || filter_var($username, FILTER_VALIDATE_EMAIL) !== false
+            );
+    }
+
+    public function verify_token(string $token): object|false
+    {
+        if (isset($this->verified_tokens[$token])) {
+            return $this->verified_tokens[$token];
+        }
+
+        if (!preg_match('/^([a-zA-Z0-9]+):([0-9a-f]{64})$/', $token, $groups)) {
+            return false;
+        }
+
+        // token deleted or never existed
+
+        [, $id, $random_bits] = $groups;
+
+        $time = microtime(true);
+
+        $line = null;
+
+        try {
+            $line = $this->linetype('token')->get(null, $id);
+        } catch (\Exception $e) {}
+
+        if (
+            !$line
+            || $line->token !== $random_bits
+            || $line->ttl + $line->used < time()
+        ) {
+            usleep(floor((0.5 + $time - microtime(true)) * 1000000)); // don't let on whether the line existed
+
+            return false;
+        }
+
+        $user = null;
+
+        if (@$line->user) {
+            $userfile = $this->db_home . '/current/records/users/' . $line->user . '.json';
+
+            if (!$this->filesystem->has($userfile)) {
+                throw new Exception('Token Verification Error 1', 500);
+            }
+
+            $user = json_decode($this->filesystem->get($userfile));
+        }
+
+        $token_object = (object) [
+            'id' => $line->id,
+            'token' => $line->token,
+            'user' => @$user->id,
+        ];
+
+        $this->verified_tokens[$token] = $token_object;
+
+        return $token_object;
+    }
+
+    public function version(): ?string
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        $found = [];
-
-        foreach (array_keys($this->config->linetypes()) as $linetype_name) {
-            $linetype = $this->linetype($linetype_name);
-
-            if ($linetype->table === $table) {
-                $found[] = $linetype;
-            }
-        }
-
-        return $found;
+        return $this->head;
     }
 
     private function version_number_of(string $version): int
@@ -1321,15 +1324,5 @@ class Jars implements contract\Client
         }
 
         return intval($number);
-    }
-
-    private function db_version(): string
-    {
-        return $this->filesystem->get($this->current_version_file()) ?? hash('sha256', 'jars');
-    }
-
-    private function current_version_file(): string
-    {
-        return $this->db_path('version.dat');
     }
 }
