@@ -116,7 +116,7 @@ class Linetype
         return $clone;
     }
 
-    public function complete($line) : void
+    public function complete($line): void
     {
         foreach ($this->completions as $completion) {
             ($completion)($line);
@@ -345,8 +345,10 @@ class Linetype
         $oldrecord = null;
         $old_inlines = [];
 
-        if (@$line->id) {
-            $line->given_id = $line->id;
+        unset($line->_given_id);
+
+        if ($was = (bool) @$line->id) {
+            $line->_given_id = $line->id;
             $oldrecord = Record::of($this->jars, $this->table, $line->id);
             $oldline = $this->get($token, $line->id, $old_inlines);
 
@@ -355,6 +357,8 @@ class Linetype
                     $line->$property = $oldline->$property;
                 }
             }
+        } else {
+            $line->id = $this->jars->takeanumber();
         }
 
         $this->complete($line);
@@ -366,12 +370,7 @@ class Linetype
         $is = $this->is($line);
 
         if ($is) { // Add or Update
-            if (!@$line->id) { // Add
-                $line->id = $this->jars->takeanumber();
-                $verb = '+';
-            } else {
-                $verb = '~';
-            }
+            $verb = $was ? '~' : '+';
 
             if ($logging !== null) {
                 echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
@@ -897,13 +896,13 @@ class Linetype
 
     public function scrub($token, $line)
     {
-        if (@$line->given_id) {
-            $line->id = $line->given_id;
+        if (@$line->_given_id) {
+            $line->id = $line->_given_id;
         } else {
             unset($line->id);
         }
 
-        unset($line->given_id);
+        unset($line->_given_id);
 
         // strip non-scalars that aren't child sets or specials
 
