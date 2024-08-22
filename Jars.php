@@ -80,7 +80,7 @@ class Jars implements contract\Client
         return array_values($classify); // be forgiving of non-numeric or non-sequential indices
     }
 
-    private function commit(string $timestamp, array $commits, array $meta, ?string $base_version): void
+    private function commit(string $timestamp, array $commits, array $meta, array $saves, ?string $base_version): void
     {
         foreach ($commits as $id => $commit) {
             if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
@@ -145,6 +145,18 @@ class Jars implements contract\Client
         $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
         $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
         $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
+
+        foreach ($saves as $save) {
+            if (!$save->record->oldrecord) {
+                $save->record->created_version = $this->head;
+                $save->record->created = $timestamp;
+            }
+
+            $save->record->modified = $timestamp;
+            $save->record->modified_version = $this->head;
+
+            $save->record->save();
+        }
 
         if ($i_lock) {
             $this->unlock_internal();
@@ -398,8 +410,9 @@ class Jars implements contract\Client
             $this->filesystem->reset();
         } else {
             $commits = array_filter($commits);
+            $saves = array_filter($affecteds, fn ($affected) => $affected->action === 'save');
 
-            $this->commit($timestamp, $commits, $meta, $base_version);
+            $this->commit($timestamp, $commits, $meta, $saves, $base_version);
         }
 
         $this->trigger('entryimported');

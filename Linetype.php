@@ -378,10 +378,6 @@ class Linetype
 
             $record = $oldrecord ? (clone $oldrecord) : Record::of($this->jars, $this->table);
 
-            if ($oldline === null) {
-                $record->created = $timestamp;
-            }
-
             $record->id = $line->id;
 
             $affecteds[] = (object) [
