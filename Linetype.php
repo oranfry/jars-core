@@ -376,8 +376,13 @@ class Linetype
                 echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
-            $record = $oldrecord ? (clone $oldrecord) : Record::of($this->jars, $this->table);
+            $record = $oldrecord ? clone $oldrecord : Record::of($this->jars, $this->table);
 
+            if (!$was) {
+                $record->created = $timestamp;
+            }
+
+            $record->modified = $timestamp;
             $record->id = $line->id;
 
             $affecteds[] = (object) [

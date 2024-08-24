@@ -149,10 +149,8 @@ class Jars implements contract\Client
         foreach ($saves as $save) {
             if (!$save->record->oldrecord) {
                 $save->record->created_version = $this->head;
-                $save->record->created = $timestamp;
             }
 
-            $save->record->modified = $timestamp;
             $save->record->modified_version = $this->head;
 
             $save->record->save();
