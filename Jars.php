@@ -959,11 +959,7 @@ class Jars implements contract\Client
 
         $past_dir = $this->db_path('past');
 
-        // TODO: This assumes we never interact with past dir via Filesystem class, so implement Filesystem::find() instead
-
-        foreach (array_filter(explode("\n", `test -d "$past_dir" && find "$past_dir" -type f || true` ?? '')) as $pastfile) {
-            $this->filesystem->put($pastfile, null);
-        }
+        `rm -rf "$past_dir"`;
 
         $this->filesystem->put($this->reports_version_file(), $bunny); // the greyhound has caught the bunny!
 
