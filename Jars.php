@@ -112,52 +112,50 @@ class Jars implements contract\Client
 
         // we have the floor!
 
-        $this->head = $this->db_version();
+        try {
+            $this->head = $this->db_version();
 
-        $version_number = $this->version_number_of($this->head);
+            $version_number = $this->version_number_of($this->head);
 
-        // complain if this would cause concurrent modification
+            // complain if this would cause concurrent modification
 
-        if ($modified_ids && $base_version !== $this->head) {
-            $from = $this->version_number_of($base_version) + 1;
-            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'`));
+            if ($modified_ids && $base_version !== $this->head) {
+                $from = $this->version_number_of($base_version) + 1;
+                $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'`));
 
-            $comodified_ids = array_map(
-                fn ($change) => preg_replace('/.*:/', '', $change),
-                array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
-            );
+                $comodified_ids = array_map(
+                    fn ($change) => preg_replace('/.*:/', '', $change),
+                    array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
+                );
 
-            if (array_intersect($comodified_ids, $modified_ids)) {
-                if ($i_lock) {
-                    $this->unlock_internal();
+                if (array_intersect($comodified_ids, $modified_ids)) {
+                    throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
+                }
+            }
+
+            $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
+            $meta_export = implode(' ', $meta);
+
+            $this->head = hash('sha256', $this->head . $master_export);
+
+            $this->filesystem->put($this->current_version_file(), $this->head);
+            $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
+            $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
+            $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
+
+            foreach ($saves as $save) {
+                if (!$save->record->oldrecord) {
+                    $save->record->created_version = $this->head;
                 }
 
-                throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
+                $save->record->modified_version = $this->head;
+
+                $save->record->save();
             }
-        }
-
-        $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
-        $meta_export = implode(' ', $meta);
-
-        $this->head = hash('sha256', $this->head . $master_export);
-
-        $this->filesystem->put($this->current_version_file(), $this->head);
-        $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
-        $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
-        $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
-
-        foreach ($saves as $save) {
-            if (!$save->record->oldrecord) {
-                $save->record->created_version = $this->head;
+        } finally {
+            if ($i_lock) {
+                $this->unlock_internal();
             }
-
-            $save->record->modified_version = $this->head;
-
-            $save->record->save();
-        }
-
-        if ($i_lock) {
-            $this->unlock_internal();
         }
     }
 
@@ -803,118 +801,125 @@ class Jars implements contract\Client
             mkdir($lines_dir, 0777, true);
         }
 
-        $bunny = $this->filesystem->get($this->db_path('version.dat'));
-        $bunny_number = (int) $this->filesystem->get($this->db_path('versions/' . $bunny));
-        $greyhound = $this->reports_version($greyhound_number);
-
-        if ($greyhound && $bunny == $greyhound) {
-            $this->head = $greyhound;
-
-            return $greyhound;
+        if ($i_lock = !isset($this->locker_pin)) {
+            $this->lock();
         }
 
-        if ($bunny_number > $greyhound_number) {
-            $from = $greyhound_number + 1;
-            $direction = 'forward';
-            $sorter = null;
-        } else {
-            $from = $bunny_number + 1;
-            $direction = 'back';
-            $sorter = 'array_reverse';
-        }
+        // we have the floor!
 
-        $length = abs($bunny_number - $greyhound_number);
-        $master_meta_file = $this->db_path('master.dat.meta');
-        $metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | head -n $length | cut -c66- | sed 's/ /\\n/g'`));
+        try {
+            $bunny = $this->filesystem->get($this->db_path('version.dat'));
+            $bunny_number = (int) $this->filesystem->get($this->db_path('versions/' . $bunny));
+            $greyhound = $this->reports_version($greyhound_number);
 
-        if ($sorter) {
-            $metas = $sorter($metas);
-        }
+            if ($greyhound && $bunny == $greyhound) {
+                $this->head = $greyhound;
 
-        $changes = [];
-
-        foreach ($metas as $meta) {
-            if (preg_match('/^[<>]/', $meta, $matches)) {
-                // connection or disconnection
-                continue;
+                return $greyhound;
             }
 
-            if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
-                throw new Exception('Invalid meta line: ' . $meta);
+            if ($bunny_number > $greyhound_number) {
+                $from = $greyhound_number + 1;
+                $direction = 'forward';
+                $sorter = null;
+            } else {
+                $from = $bunny_number + 1;
+                $direction = 'back';
+                $sorter = 'array_reverse';
             }
 
-            [, $sign, $table, $id] = $matches;
+            $length = abs($bunny_number - $greyhound_number);
+            $master_meta_file = $this->db_path('master.dat.meta');
+            $metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | head -n $length | cut -c66- | sed 's/ /\\n/g'`));
 
-            if (!isset($changes[$id])) {
-                $changes[$id] = (object) [
-                    'table' => $table,
-                ];
+            if ($sorter) {
+                $metas = $sorter($metas);
             }
 
-            $changes[$id]->sign = $sign;
-        }
+            $changes = [];
 
-        $lines = [];
-        $childsets = [];
+            foreach ($metas as $meta) {
+                if (preg_match('/^[<>]/', $meta, $matches)) {
+                    // connection or disconnection
+                    continue;
+                }
 
-        // propagate
+                if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
+                    throw new Exception('Invalid meta line: ' . $meta);
+                }
 
-        if ($greyhound) {
-            foreach ($changes as $id => $change) {
-                $this->propagate_r($change->table, $id, $greyhound, $changes);
+                [, $sign, $table, $id] = $matches;
+
+                if (!isset($changes[$id])) {
+                    $changes[$id] = (object) [
+                        'table' => $table,
+                    ];
+                }
+
+                $changes[$id]->sign = $sign;
             }
-        }
 
-        $changed_reports = [];
+            $lines = [];
+            $childsets = [];
 
-        foreach (array_keys($this->config->reports()) as $report_name) {
-            $report = $this->report($report_name);
+            // propagate
 
-            foreach ($changes as $id => $change) {
-                foreach ($report->listen as $linetype => $listen) {
-                    if (is_numeric($linetype)) {
-                        $linetype = $listen;
-                        $listen = (object) [];
-                    }
+            if ($greyhound) {
+                foreach ($changes as $id => $change) {
+                    $this->propagate_r($change->table, $id, $greyhound, $changes);
+                }
+            }
 
-                    if (preg_match('/^report:/', $linetype)) {
-                        continue;
-                    }
+            $changed_reports = [];
 
-                    if ($change->table != $this->linetype($linetype)->table) {
-                        continue;
-                    }
+            foreach (array_keys($this->config->reports()) as $report_name) {
+                $report = $this->report($report_name);
 
-                    $current_groups = [];
-                    $past_groups = [];
-
-                    if (in_array($change->sign, ['+', '~', '*'])) {
-                        if (!isset($lines[$linetype])) {
-                            $lines[$linetype] = [];
+                foreach ($changes as $id => $change) {
+                    foreach ($report->listen as $linetype => $listen) {
+                        if (is_numeric($linetype)) {
+                            $linetype = $listen;
+                            $listen = (object) [];
                         }
 
-                        $linetype_lines = &$lines[$linetype];
-
-                        if (!isset($linetype_lines[$id])) {
-                            $linetype_lines[$id] = $this->get($linetype, $id);
+                        if (preg_match('/^report:/', $linetype)) {
+                            continue;
                         }
 
-                        $line = clone $lines[$linetype][$id];
+                        if ($change->table != $this->linetype($linetype)->table) {
+                            continue;
+                        }
 
-                        $this->load_children_r($line, @$listen->children ?? [], $childsets);
+                        $current_groups = [];
+                        $past_groups = [];
 
-                        try {
-                            if (property_exists($listen, 'classify') && $listen->classify) {
-                                $current_groups = static::classifier_value($listen->classify, $line);
-                            } elseif (property_exists($report, 'classify') && $report->classify) {
-                                $current_groups = static::classifier_value($report->classify, $line);
-                            } else {
-                                $current_groups = [''];
+                        if (in_array($change->sign, ['+', '~', '*'])) {
+                            if (!isset($lines[$linetype])) {
+                                $lines[$linetype] = [];
                             }
-                        } catch (Exception $e) {
-                            throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
+
+                            $linetype_lines = &$lines[$linetype];
+
+                            if (!isset($linetype_lines[$id])) {
+                                $linetype_lines[$id] = $this->get($linetype, $id);
+                            }
+
+                            $line = clone $lines[$linetype][$id];
+
+                            $this->load_children_r($line, @$listen->children ?? [], $childsets);
+
+                            try {
+                                if (property_exists($listen, 'classify') && $listen->classify) {
+                                    $current_groups = static::classifier_value($listen->classify, $line);
+                                } elseif (property_exists($report, 'classify') && $report->classify) {
+                                    $current_groups = static::classifier_value($report->classify, $line);
+                                } else {
+                                    $current_groups = [''];
+                                }
+                            } catch (Exception $e) {
+                                throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
+                            }
                         }
-                    }
 
                         $groups_file = $lines_dir . '/' . $report_name . '/' . $linetype . '/' . $id . '.json';
 
@@ -927,44 +932,49 @@ class Jars implements contract\Client
                         }
 
                         if (in_array($change->sign, ['-', '~', '*'])) {
-                        $past_groups = $this->filesystem->has($groups_file) ? json_decode($this->filesystem->get($groups_file))->groups : [];
-                    }
+                            $past_groups = $this->filesystem->has($groups_file) ? json_decode($this->filesystem->get($groups_file))->groups : [];
+                        }
 
-                    // remove
+                        // remove
 
-                    foreach (array_diff($past_groups, $current_groups) as $group) {
-                        $report->delete($group, $linetype, $id);
-                    }
+                        foreach (array_diff($past_groups, $current_groups) as $group) {
+                            $report->delete($group, $linetype, $id);
+                        }
 
-                    // upsert
+                        // upsert
 
-                    foreach ($current_groups as $group) {
-                        $report->upsert($group, $line, @$report->sorter);
-                    }
+                        foreach ($current_groups as $group) {
+                            $report->upsert($group, $line, @$report->sorter);
+                        }
 
-                    if ($current_groups) {
-                        $this->filesystem->put($groups_file, json_encode(['groups' => $current_groups], JSON_UNESCAPED_SLASHES));
-                    } elseif ($this->filesystem->has($groups_file)) {
-                        $this->filesystem->delete($groups_file);
-                    }
+                        if ($current_groups) {
+                            $this->filesystem->put($groups_file, json_encode(['groups' => $current_groups], JSON_UNESCAPED_SLASHES));
+                        } elseif ($this->filesystem->has($groups_file)) {
+                            $this->filesystem->delete($groups_file);
+                        }
 
-                    foreach (array_merge($past_groups, $current_groups) as $group) {
-                        $changed_reports[$report_name][$group] = true;
+                        foreach (array_merge($past_groups, $current_groups) as $group) {
+                            $changed_reports[$report_name][$group] = true;
+                        }
                     }
                 }
             }
+
+            $past_dir = $this->db_path('past');
+
+            `rm -rf "$past_dir"`;
+
+            $this->filesystem->put($this->reports_version_file(), $bunny); // the greyhound has caught the bunny!
+
+            $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
+            $this->filesystem->persist()->reset();
+
+            $this->head = $bunny;
+        } finally {
+            if ($i_lock) {
+                $this->unlock_internal();
+            }
         }
-
-        $past_dir = $this->db_path('past');
-
-        `rm -rf "$past_dir"`;
-
-        $this->filesystem->put($this->reports_version_file(), $bunny); // the greyhound has caught the bunny!
-
-        $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
-        $this->filesystem->persist()->reset();
-
-        $this->head = $bunny;
 
         return $bunny;
     }
