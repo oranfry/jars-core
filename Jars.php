@@ -916,17 +916,17 @@ class Jars implements contract\Client
                         }
                     }
 
-                    $groups_file = $lines_dir . '/' . $report_name . '/' . $linetype . '/' . $id . '.json';
+                        $groups_file = $lines_dir . '/' . $report_name . '/' . $linetype . '/' . $id . '.json';
 
-                    if (!is_dir(dirname($groups_file))) {
-                        if (!is_dir(dirname($groups_file, 2))) {
-                            mkdir(dirname($groups_file, 2));
+                        if (!is_dir($parent = dirname($groups_file))) {
+                            if (!is_dir($grandparent = dirname($groups_file, 2))) {
+                                mkdir($grandparent);
+                            }
+
+                            mkdir($parent);
                         }
 
-                        mkdir(dirname($groups_file));
-                    }
-
-                    if (in_array($change->sign, ['-', '~', '*'])) {
+                        if (in_array($change->sign, ['-', '~', '*'])) {
                         $past_groups = $this->filesystem->has($groups_file) ? json_decode($this->filesystem->get($groups_file))->groups : [];
                     }
 
