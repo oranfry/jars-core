@@ -314,7 +314,7 @@ class Jars implements contract\Client
         return $groups;
     }
 
-    public function h2n(string $h, int $max = INF): ?int
+    public function h2n(string $h, ?int $max = null): ?int
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -322,7 +322,7 @@ class Jars implements contract\Client
 
         $sequence = $this->config->sequence();
 
-        for ($n = 1; $n <= $max; $n++) {
+        for ($n = 1; $n <= ($max ?? INF); $n++) {
             if ($this->n2h($n) == $h) {
                 return $n;
             }
