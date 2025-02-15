@@ -53,6 +53,7 @@ class Filesystem
         }
 
         $this->store[$file] = (object) [
+            'mode' => 'overwrite',
             'content' => $content,
             'dirty' => true,
         ];
@@ -60,8 +61,17 @@ class Filesystem
 
     public function has(string $file)
     {
-        if (array_key_exists($file, $this->store)) {
-            return $this->store[$file]->content !== null;
+        if ($this->cached($file)) {
+            switch ($this->store[$file]->mode) {
+                case 'append':
+                    if ($this->store[$file]->dirty) {
+                        return true;
+                    }
+
+                    break;
+                default:
+                    return $this->store[$file]->content !== null;
+            }
         }
 
         return is_file($file);
@@ -75,6 +85,7 @@ class Filesystem
 
         $this->store[$file] = (object) [
             'content' => null,
+            'mode' => 'overwrite',
             'dirty' => true,
         ];
     }
@@ -86,14 +97,16 @@ class Filesystem
 
     public function get(string $file, string $default = null)
     {
-        if (!array_key_exists($file, $this->store)) {
+        if (!$this->cached($file)) {
             $this->load($file, $default);
+        } elseif ($this->store[$file]->mode === 'append') {
+            $this->switch_mode($file);
         }
 
         return $this->store[$file]->content;
     }
 
-    public function persist() : object
+    public function persist(): self
     {
         if ($this->no_persist) {
             throw new Exception('Attempt made to persist to no-persist filesystem');
@@ -104,7 +117,11 @@ class Filesystem
                 continue;
             }
 
-            if ($details->content !== null) {
+            if ($details->mode === 'append') {
+                @mkdir(dirname($file), 0777, true);
+                file_put_contents($file, $details->content, FILE_APPEND);
+                $details->content = null;
+            } elseif ($details->content !== null) {
                 @mkdir(dirname($file), 0777, true);
                 file_put_contents($file, $details->content);
             } elseif (is_file($file)) {
@@ -117,21 +134,21 @@ class Filesystem
         return $this;
     }
 
-    public function reset(): object
+    public function reset(): self
     {
         $this->store = [];
 
         return $this;
     }
 
-    public function revert(string $file): object
+    public function revert(string $file): self
     {
         unset($this->store[$file]);
 
         return $this;
     }
 
-    public function forget(string $file): object
+    public function forget(string $file): self
     {
         if (!@$this->store[$file]->dirty) {
             unset($this->store[$file]);
@@ -162,8 +179,14 @@ class Filesystem
             throw new Exception('Attempt made to modify read-only filesystem');
         }
 
-        if (!isset($this->store[$file])) {
-            $this->load($file);
+        if (!$this->cached($file)) {
+            $this->store[$file] = (object) [
+                'content' => null,
+                'dirty' => false,
+                'mode' => 'append',
+            ];
+        } elseif ($this->store[$file]->mode !== 'append') {
+            $this->switch_mode($file);
         }
 
         if ($content === null) {
@@ -185,6 +208,19 @@ class Filesystem
         $this->store[$file] = (object) [
             'content' => $content,
             'dirty' => false,
+            'mode' => 'overwrite',
         ];
+    }
+
+    private function switch_mode(string $file): self
+    {
+        if (null === $appendage = $this->store[$file]->content) {
+            return $this->revert($file);
+        }
+
+        $this->load($file);
+        $this->store[$file]->content .= $appendage;
+
+        return $this;
     }
 }
