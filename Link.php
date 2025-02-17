@@ -10,15 +10,13 @@ class Link
     private $jars;
     private $name;
     private $reverse;
-    private $version;
 
-    public function __construct(Jars $jars, string $name, string $id, ?bool $reverse = null, ?string $version = null)
+    public function __construct(Jars $jars, string $name, string $id, ?bool $reverse = null)
     {
         $this->jars = $jars;
         $this->name = $name;
         $this->id = $id;
         $this->reverse = (bool) $reverse;
-        $this->version = $version;
     }
 
     public function direction()
@@ -50,19 +48,20 @@ class Link
 
     private function file()
     {
-        $version_path = $this->version ? 'past/' . $this->version : 'current';
-
-        return $this->jars->db_path($version_path . '/links/' . $this->name . '/' . $this->direction() . '/' . $this->id . '.json');
+        return $this->jars->db_path('current/links/' . $this->name . '/' . $this->direction() . '/' . $this->id . '.json');
     }
 
-    private function load()
+    private function load(): self
     {
         $file = $this->file();
+        $json = $this->jars->filesystem()->get($file) ?? '[]';
 
-        $this->data = json_decode($this->jars->filesystem()->get($file) ?? '[]', true);
+        $this->data = json_decode($json, true);
+
+        return $this;
     }
 
-    public function add($linked_id)
+    public function add($linked_id): self
     {
         if ($this->data === null) {
             $this->load();
@@ -76,7 +75,7 @@ class Link
         return $this;
     }
 
-    public function remove($linked_id)
+    public function remove($linked_id): self
     {
         if ($this->data === null) {
             $this->load();
@@ -99,7 +98,10 @@ class Link
             return;
         }
 
-        $this->jars->filesystem()->put($this->file(), count($this->data) ? json_encode($this->data, JSON_UNESCAPED_SLASHES) : null);
+        $this->jars->filesystem()->put(
+            $this->file(),
+            count($this->data) ? json_encode($this->data, JSON_UNESCAPED_SLASHES) : null,
+        );
     }
 
     public function name()
@@ -107,8 +109,8 @@ class Link
         return $this->name;
     }
 
-    public static function of(Jars $jars, string $name, string $id, ?bool $reverse = null, ?string $version = null)
+    public static function of(Jars $jars, string $name, string $id, ?bool $reverse = null)
     {
-        return new static($jars, $name, $id, $reverse, $version);
+        return new static($jars, $name, $id, $reverse);
     }
 }

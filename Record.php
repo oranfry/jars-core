@@ -13,9 +13,8 @@ class Record
     private ?string $format = 'json';
     private ?string $id = null;
     private string $table;
-    private ?string $version = null;
 
-    public function __construct(Jars $jars, string $table, ?string $id = null, ?string $version = null)
+    public function __construct(Jars $jars, string $table, ?string $id = null)
     {
         $this->jars = $jars;
 
@@ -150,9 +149,7 @@ class Record
             throw new Exception('Could not generate filename');
         }
 
-        $version_path = $this->version ? 'past/' . $this->version : 'current';
-
-        return $this->jars->db_path($version_path . "/records/{$this->table}/{$this->id}" . ($this->extension ? '.' . $this->extension : null));
+        return $this->jars->db_path("current/records/{$this->table}/{$this->id}" . ($this->extension ? '.' . $this->extension : null));
     }
 
     private function load()
@@ -173,9 +170,9 @@ class Record
         }
     }
 
-    public static function of(Jars $jars, string $table, string $id = null, ?string $version = null)
+    public static function of(Jars $jars, string $table, string $id = null)
     {
-        return new Record($jars, $table, $id, $version);
+        return new Record($jars, $table, $id);
     }
 
     public function save()
@@ -188,7 +185,10 @@ class Record
             return;
         }
 
-        $this->jars->filesystem()->put($this->file(), $this->export());
+        $this->jars->filesystem()->put(
+            $this->file(),
+            $this->export(),
+        );
     }
 
     public function toArray(): array
@@ -197,9 +197,6 @@ class Record
             $this->load();
         }
 
-        return array_merge(
-            ['id' => $this->id],
-            $this->data,
-        );
+        return array_merge(['id' => $this->id], $this->data);
     }
 }

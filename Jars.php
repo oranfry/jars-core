@@ -12,16 +12,20 @@ use jars\contract\Exception;
 
 class Jars implements contract\Client
 {
-    private $filesystem;
-    private $known = [];
-    private $listeners = [];
-    private $token;
-    private $verified_tokens = [];
-    private ?string $head = null;
-    private Config $config;
     private $touch_handle;
-    private string $db_home;
+    private ?Filesystem $filesystem;
+    private static ?object $debug_node = null;
+    private static ?object $debug_root = null;
+    private ?string $head = null;
     private ?string $locker_pin;
+    private ?string $token;
+    private array $known = [];
+    private array $listeners = [];
+    private array $verified_tokens = [];
+    private Config $config;
+    private string $db_home;
+
+    const INITIAL_VERSION = 'd6711496d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
 
     public function __construct(Config $config, string $db_home)
     {
@@ -99,12 +103,11 @@ class Jars implements contract\Client
 
         @mkdir($version_dir = $this->db_home . '/versions', 0777, true);
 
-        $master_record_file = $this->db_home . '/master.dat';
-        $master_meta_file = $master_record_file . '.meta';
-
         if ($modified_ids && !$base_version) {
             throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: none");
         }
+
+        $master_meta_file = $this->masterlog_meta_file();
 
         if ($i_lock = !isset($this->locker_pin)) {
             $this->lock();
@@ -121,7 +124,7 @@ class Jars implements contract\Client
 
             if ($modified_ids && $base_version !== $this->head) {
                 $from = $this->version_number_of($base_version) + 1;
-                $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'`));
+                $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'` ?? ''));
 
                 $comodified_ids = array_map(
                     fn ($change) => preg_replace('/.*:/', '', $change),
@@ -138,10 +141,10 @@ class Jars implements contract\Client
 
             $this->head = hash('sha256', $this->head . $master_export);
 
-            $this->filesystem->put($this->current_version_file(), $this->head);
+            $this->db_version($this->head);
             $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
             $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
-            $this->filesystem->append($master_record_file, $this->head . ' ' . $master_export . "\n");
+            $this->filesystem->append($this->masterlog_file(), $this->head . ' ' . $master_export . "\n");
 
             foreach ($saves as $save) {
                 if (!$save->record->oldrecord) {
@@ -164,19 +167,73 @@ class Jars implements contract\Client
         return $this->config;
     }
 
-    private function current_version_file(): string
-    {
-        return $this->db_path('version.dat');
-    }
-
     public function db_path(?string $path = null): string
     {
         return $this->db_home . ($path ? '/' . $path : null);
     }
 
-    private function db_version(): string
+    private function db_version(?string $new = null): string|self
     {
-        return $this->filesystem->get($this->current_version_file()) ?? hash('sha256', 'jars');
+        $db_version_file = $this->db_path('version.dat');
+
+        if (func_num_args()) {
+            $this->filesystem->put($db_version_file, $new);
+
+            return $this;
+        }
+
+        return $this->filesystem->get($db_version_file) ?? static::INITIAL_VERSION;
+    }
+
+    public static function debug_push(string $activity): void
+    {
+        if (!defined('JARS_CORE_DEBUG') || !JARS_CORE_DEBUG) {
+            return;
+        }
+
+        $node = (object) [
+            'start' => microtime(true),
+            'activity' => $activity,
+            'parent' => static::$debug_node,
+            'children' => [],
+        ];
+
+        if (null === static::$debug_node) {
+            static::$debug_root = static::$debug_node = $node;
+        } else {
+            static::$debug_node->children[] = $node;
+            static::$debug_node = $node;
+        }
+    }
+
+    public static function debug_pop(): void
+    {
+        if (!defined('JARS_CORE_DEBUG') || !JARS_CORE_DEBUG) {
+            return;
+        }
+
+        if (null === static::$debug_node) {
+            error_log('Debug failure: tried to pop but nothing to left pop');
+        }
+
+        // close off this node first
+
+        static::$debug_node->end = microtime(true);
+        static::$debug_node->duration = static::$debug_node->end - static::$debug_node->start;
+
+        for (
+            $level = 0, $_node = static::$debug_node;
+            $_node !== null;
+            $level++, $_node = $_node->parent
+        );
+
+        // display what we know so far in error log
+
+        error_log(str_repeat(' ', 4 * $level) . static::$debug_node->activity . ' finished in ' . number_format(static::$debug_node->duration, 8) . 's');
+
+        // now pop back to the parent
+
+        static::$debug_node = static::$debug_node->parent;
     }
 
     public function delete(string $linetype, string $id): array
@@ -342,19 +399,11 @@ class Jars implements contract\Client
         $original_filesystem = clone $this->filesystem;
         $original_filesystem->freeze();
 
+        static::debug_push('Jars::import_r');
         $lines = $this->import_r($original_filesystem, $timestamp, $lines, $base_version, $affecteds, $commits, null, $logging, $differential);
-        $meta  = [];
+        static::debug_pop();
 
-        if (
-            !$dryrun
-            && file_exists($current_version_file = $this->current_version_file())
-            && !file_exists("{$this->db_home}/past")
-        ) {
-            $version = trim(file_get_contents($current_version_file));
-
-            `mkdir -p "{$this->db_home}/past" && cp -r "{$this->db_home}/current" "{$this->db_home}/past/$version"`;
-        }
-
+        static::debug_push('Process affecteds');
         foreach ($affecteds as $affected) {
             switch ($affected->action) {
                 case 'connect':
@@ -399,9 +448,13 @@ class Jars implements contract\Client
                     throw new Exception('Unknown action: ' . @$affected->action);
             }
         }
+        static::debug_pop();
 
+        static::debug_push('Dredge');
         $updated = $this->dredge_r($lines);
+        static::debug_pop();
 
+        static::debug_push('Commit activities');
         if ($dryrun) {
             $this->filesystem->reset();
         } else {
@@ -410,8 +463,11 @@ class Jars implements contract\Client
 
             $this->commit($timestamp, $commits, $meta, $saves, $base_version);
         }
+        static::debug_pop();
 
+        static::debug_push('Trigger entryimported');
         $this->trigger('entryimported');
+        static::debug_pop();
 
         return $updated;
     }
@@ -670,16 +726,23 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $master_record_file = $this->db_home . '/master.dat';
-        $master_meta_file = $master_record_file . '.meta';
-
-        if (!touch($master_record_file) || !is_writable($master_record_file)) {
+        if (!static::writable($this->masterlog_file())) {
             throw new Exception('Master record file not writable');
         }
 
-        if (!touch($master_meta_file) || !is_writable($master_meta_file)) {
+        if (!static::writable($this->masterlog_meta_file())) {
             throw new Exception('Master meta file not writable');
         }
+    }
+
+    public function masterlog_file(): string
+    {
+        return $this->db_path('master.dat');
+    }
+
+    public function masterlog_meta_file(): string
+    {
+        return $this->db_path('master.dat.meta');
     }
 
     private function meta_ids(array $meta): array
@@ -726,7 +789,7 @@ class Jars implements contract\Client
         return $this->import(date('Y-m-d H:i:s'), $lines, $base_version, true);
     }
 
-    private function propagate_r(string $table, string $id, string $version, array &$changes = [], array &$seen = []): void
+    private function propagate_r(string $table, string $id, array &$relatives, array &$changes = [], array &$seen = []): void
     {
         foreach ($this->find_table_linetypes($table) as $linetype) {
             $relationships = array_merge(
@@ -735,34 +798,32 @@ class Jars implements contract\Client
             );
 
             foreach ($relationships as $relationship) {
-                $links = [
-                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse, $version),
-                    Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)
-                ];
+                $direction = ($relationship->reverse ?? false) ? 'forth' : 'back';
+                $lost_relatives = $relatives[$relationship->tablelink][$direction][$id] ?? [];
+                $current_relatives = Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)->relatives();
+                $relatives = array_unique(array_merge($lost_relatives, $current_relatives));
 
-                foreach ($links as $link) {
-                    foreach ($link->relatives() as $relative_id) {
-                        $relative_linetype = $this->linetype($relationship->parent_linetype);
-                        $table = $relative_linetype->table;
+                foreach ($relatives as $relative_id) {
+                    $relative_linetype = $this->linetype($relationship->parent_linetype);
+                    $table = $relative_linetype->table;
 
-                        if (!Record::of($this, $table, $relative_id)->exists()) {
-                            continue;
-                        }
+                    if (!Record::of($this, $table, $relative_id)->exists()) {
+                        continue;
+                    }
 
-                        $change = (object) [
-                            'table' => $table,
-                            'sign' => '*',
-                        ];
+                    $change = (object) [
+                        'table' => $table,
+                        'sign' => '*',
+                    ];
 
-                        if (!isset($changes[$relative_id])) {
-                            $changes[$relative_id] = $change;
-                        }
+                    if (!isset($changes[$relative_id])) {
+                        $changes[$relative_id] = $change;
+                    }
 
-                        if (!isset($seen[$key = $table . ':' . $relative_id])) {
-                            $seen[$key] = true;
+                    if (!isset($seen[$key = $table . ':' . $relative_id])) {
+                        $seen[$key] = true;
 
-                            $this->propagate_r($table, $relative_id, $version, $changes, $seen);
-                        }
+                        $this->propagate_r($table, $relative_id, $relatives, $changes, $seen);
                     }
                 }
             }
@@ -830,17 +891,29 @@ class Jars implements contract\Client
 
             $length = abs($bunny_number - $greyhound_number);
             $master_meta_file = $this->db_path('master.dat.meta');
-            $metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | head -n $length | cut -c66- | sed 's/ /\\n/g'`));
+            $metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | head -n $length | cut -c66- | sed 's/ /\\n/g'` ?? ''));
 
             if ($sorter) {
                 $metas = $sorter($metas);
             }
 
             $changes = [];
+            $relatives = [];
 
             foreach ($metas as $meta) {
-                if (preg_match('/^[<>]/', $meta, $matches)) {
-                    // connection or disconnection
+                // connection
+
+                if (preg_match('/^>/', $meta)) {
+                    continue;
+                }
+
+                // disconnection - keep track of linked record ids
+
+                if (preg_match('/^<([^:,]+):([^:,]+),([^:,]+)$/', $meta, $matches)) {
+                    [, $tablelink, $left, $right] = $matches;
+
+                    $relatives[$tablelink]['forth'][$left][] = $right;
+                    $relatives[$tablelink]['back'][$right][] = $left;
                     continue;
                 }
 
@@ -866,7 +939,7 @@ class Jars implements contract\Client
 
             if ($greyhound) {
                 foreach ($changes as $id => $change) {
-                    $this->propagate_r($change->table, $id, $greyhound, $changes);
+                    $this->propagate_r($change->table, $id, $relatives, $changes);
                 }
             }
 
@@ -959,10 +1032,6 @@ class Jars implements contract\Client
                     }
                 }
             }
-
-            $past_dir = $this->db_path('past');
-
-            `rm -rf "$past_dir"`;
 
             $this->filesystem->put($this->reports_version_file(), $bunny); // the greyhound has caught the bunny!
 
@@ -1158,7 +1227,13 @@ class Jars implements contract\Client
             return $lines;
         }
 
-        return $this->import(date('Y-m-d H:i:s'), $lines, $base_version);
+        static::debug_push('Jars::import');
+
+        $result = $this->import(date('Y-m-d H:i:s'), $lines, $base_version);
+
+        static::debug_pop();
+
+        return $result;
     }
 
     public function takeanumber(): string
@@ -1330,7 +1405,7 @@ class Jars implements contract\Client
 
     private function version_number_of(string $version): int
     {
-        if ($version === hash('sha256', 'jars')) {
+        if ($version === static::INITIAL_VERSION) {
             return 0;
         }
 
@@ -1341,5 +1416,10 @@ class Jars implements contract\Client
         }
 
         return intval($number);
+    }
+
+    private static function writable(string $file): bool
+    {
+        return touch($file) && is_writable($file);
     }
 }
