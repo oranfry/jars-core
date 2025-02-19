@@ -12,13 +12,13 @@ use jars\contract\Exception;
 
 class Jars implements contract\Client
 {
-    private $touch_handle;
+    private $touch_handle = null;
     private ?Filesystem $filesystem;
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
     private ?string $head = null;
-    private ?string $locker_pin;
-    private ?string $token;
+    private ?string $locker_pin = null;
+    private ?string $token = null;
     private array $known = [];
     private array $listeners = [];
     private array $verified_tokens = [];
@@ -31,7 +31,6 @@ class Jars implements contract\Client
     {
         $this->config = $config;
         $this->db_home = $db_home;
-
         $this->filesystem = new Filesystem();
 
         if (!($this->config->linetypes()['token'] ?? null)) {
