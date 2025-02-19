@@ -336,7 +336,7 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        return $this->linetype($linetype)->get_childset($this->token, $id, $property);
+        return $this->linetype($linetype)->get_childset($this->token, $id, $property, $lines_cache);
     }
 
     public function group(string $report, string $group = '', string|bool|null $min_version = null)
@@ -566,7 +566,7 @@ class Jars implements contract\Client
         $this->listeners[] = $listener;
     }
 
-    private function load_children_r(object $line, array $children, array &$childsets): void
+    private function load_children_r(object $line, array $children, array &$childsets, array &$lines_cache = null): void
     {
         foreach ($children as $property => $child) {
             if (is_numeric($property)) {
@@ -587,7 +587,7 @@ class Jars implements contract\Client
             $line_childsets = &$linetype_childsets[$line->id];
 
             if (!isset($line_childsets[$property])) {
-                $line_childsets[$property] = $this->get_childset($line->type, $line->id, $property);
+                $line_childsets[$property] = $this->get_childset($line->type, $line->id, $property, $lines_cache);
             }
 
             $childset = $line_childsets[$property];
@@ -606,7 +606,7 @@ class Jars implements contract\Client
                 }
 
                 foreach ($childset as $childline) {
-                    $this->load_children_r($childline, $child->children, $childsets);
+                    $this->load_children_r($childline, $child->children, $childsets, $lines_cache);
                 }
             }
 
@@ -932,7 +932,7 @@ class Jars implements contract\Client
                 $changes[$id]->sign = $sign;
             }
 
-            $lines = [];
+            $lines_cache = [];
             $childsets = [];
 
             // propagate
@@ -967,19 +967,17 @@ class Jars implements contract\Client
                         $past_groups = [];
 
                         if (in_array($change->sign, ['+', '~', '*'])) {
-                            if (!isset($lines[$linetype])) {
-                                $lines[$linetype] = [];
+                            if (!isset($lines_cache[$linetype])) {
+                                $lines_cache[$linetype] = [];
                             }
 
-                            $linetype_lines = &$lines[$linetype];
-
-                            if (!isset($linetype_lines[$id])) {
-                                $linetype_lines[$id] = $this->get($linetype, $id);
+                            if (!isset($lines_cache[$linetype][$id])) {
+                                $lines_cache[$linetype][$id] = $this->get($linetype, $id);
                             }
 
-                            $line = clone $lines[$linetype][$id];
+                            $line = clone $lines_cache[$linetype][$id];
 
-                            $this->load_children_r($line, @$listen->children ?? [], $childsets);
+                            $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
 
                             try {
                                 if (property_exists($listen, 'classify') && $listen->classify) {

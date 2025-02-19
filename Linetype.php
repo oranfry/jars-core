@@ -295,7 +295,7 @@ class Linetype
         return $line;
     }
 
-    public function get_childset($token, string $id, string $property): array
+    public function get_childset($token, string $id, string $property, array &$lines_cache = null): array
     {
         $child = @array_values(array_filter($this->children, fn ($o) => $o->property == $property))[0];
 
@@ -310,7 +310,11 @@ class Linetype
             $childlinetype = $this->jars->linetype($child->linetype);
 
             foreach ($child_ids as $child_id) {
-                $childset[] = $childlinetype->get($token, $child_id);
+                $childset[] = $child_line = $lines_cache[$child->linetype][$child_id] ?? $childlinetype->get($token, $child_id);
+
+                if ($lines_cache !== null) {
+                    $lines_cache[$child->linetype][$child_id] ??= $child_line;
+                }
             }
         }
 
