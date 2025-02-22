@@ -840,7 +840,7 @@ class Jars implements contract\Client
         $filename = $id . ($ext ? '.' . $ext : null);
         $content_type = $tableinfo->content_type ?? 'application/json';
 
-        if (!is_file($file = $this->db_path('current/records/' . $table . '/' . $filename))) {
+        if (!is_file($file = $this->db_path('records/' . $table . '/' . $filename))) {
             return null;
         }
 
@@ -1368,27 +1368,10 @@ class Jars implements contract\Client
             return false;
         }
 
-        $user = null;
-
-        if (@$line->user) {
-            $userfile = $this->db_home . '/current/records/users/' . $line->user . '.json';
-
-            if (!$this->filesystem->has($userfile)) {
-                throw new Exception('Token Verification Error 1', 500);
-            }
-
-            $user = json_decode($this->filesystem->get($userfile));
-        }
-
-        $token_object = (object) [
+        return $this->verified_tokens[$token] = (object) [
             'id' => $line->id,
             'token' => $line->token,
-            'user' => @$user->id,
         ];
-
-        $this->verified_tokens[$token] = $token_object;
-
-        return $token_object;
     }
 
     public function version(): ?string

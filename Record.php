@@ -149,7 +149,7 @@ class Record
             throw new Exception('Could not generate filename');
         }
 
-        return $this->jars->db_path("current/records/{$this->table}/{$this->id}" . ($this->extension ? '.' . $this->extension : null));
+        return $this->jars->db_path('records/' . $this->table . '/' . $this->id . ($this->extension ? '.' . $this->extension : null));
     }
 
     private function load()

@@ -48,7 +48,7 @@ class Link
 
     private function file()
     {
-        return $this->jars->db_path('current/links/' . $this->name . '/' . $this->direction() . '/' . $this->id . '.json');
+        return $this->jars->db_path('links/' . $this->name . '/' . $this->direction() . '/' . $this->id . '.json');
     }
 
     private function load(): self
