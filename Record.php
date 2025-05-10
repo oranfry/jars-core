@@ -170,7 +170,7 @@ class Record
         }
     }
 
-    public static function of(Jars $jars, string $table, string $id = null)
+    public static function of(Jars $jars, string $table, ?string $id = null)
     {
         return new Record($jars, $table, $id);
     }

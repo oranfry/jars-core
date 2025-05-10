@@ -95,7 +95,7 @@ class Filesystem
         return array_key_exists($file, $this->store);
     }
 
-    public function get(string $file, string $default = null)
+    public function get(string $file, ?string $default = null)
     {
         if (!$this->cached($file)) {
             $this->load($file, $default);
@@ -197,7 +197,7 @@ class Filesystem
         $this->store[$file]->dirty = true;
     }
 
-    private function load($file, $default = null)
+    private function load($file, ?string $default = null)
     {
         if (is_file($file)) {
             $content = file_get_contents($file);

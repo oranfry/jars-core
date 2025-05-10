@@ -565,7 +565,7 @@ class Jars implements contract\Client
         $this->listeners[] = $listener;
     }
 
-    private function load_children_r(object $line, array $children, array &$childsets, array &$lines_cache = null): void
+    private function load_children_r(object $line, array $children, array &$childsets, ?array &$lines_cache = null): void
     {
         foreach ($children as $property => $child) {
             if (is_numeric($property)) {
