@@ -295,7 +295,7 @@ class Linetype
         return $line;
     }
 
-    public function get_childset($token, string $id, string $property, array &$lines_cache = null): array
+    public function get_childset($token, string $id, string $property, ?array &$lines_cache = null): array
     {
         $child = @array_values(array_filter($this->children, fn ($o) => $o->property == $property))[0];
 
