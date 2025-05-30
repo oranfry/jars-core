@@ -12,7 +12,7 @@ class token extends \jars\Linetype
             'token' => fn ($records): ?string => ($base64 = $records['/']->token) ? bin2hex(base64_decode($base64)) : null,
             'ttl' => fn ($records): ?int => $records['/']->ttl,
             'used' => fn ($records): int => $records['/']->used,
-            'expired' => fn ($records): bool => strtotime($records['/']->used) + $records['/']->ttl > time(),
+            'expired' => fn ($records): bool => time() > strtotime($records['/']->used) + $records['/']->ttl,
             'delete_protected' => fn ($records): bool => $records['/']->delete_protected ?? false,
         ];
 
