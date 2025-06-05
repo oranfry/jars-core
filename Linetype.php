@@ -179,16 +179,19 @@ class Linetype
         foreach (['fields', 'borrow'] as $src) {
             foreach ($this->$src as $name => $callback) {
                 $fieldTypeObject = (new ReflectionFunction($callback))->getReturnType();
+                $fieldType = 'string';
 
-                $types = array_filter(array_map(fn ($type) => $type->getName(), match(true) {
-                    $fieldTypeObject instanceof ReflectionUnionType => $fieldTypeObject->getTypes(),
-                    default => [$fieldTypeObject],
-                }), fn ($name) => $name !== 'null');
+                if ($fieldTypeObject !== null) {
+                    $types = array_filter(array_map(fn ($type) => $type->getName(), match(true) {
+                        $fieldTypeObject instanceof ReflectionUnionType => $fieldTypeObject->getTypes(),
+                        default => [$fieldTypeObject],
+                    }), fn ($name) => $name !== 'null');
 
-                $fieldType = reset($types) ?? 'string';
+                    $fieldType = reset($types) ?? 'string';
 
-                if ($fieldType === 'int' && in_array('float', $types)) {
-                    $fieldType = 'float';
+                    if ($fieldType === 'int' && in_array('float', $types)) {
+                        $fieldType = 'float';
+                    }
                 }
 
                 $fields[] = $field = (object) [
