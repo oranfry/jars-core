@@ -6,6 +6,6 @@
     },
     "name": "oranfry/jars-core",
     "require": {
-        "oranfry/jars-contracts": "^7.0.0"
+        "oranfry/jars-contracts": "^7"
     }
 }
