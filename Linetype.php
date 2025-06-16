@@ -5,6 +5,7 @@ namespace jars;
 use ReflectionFunction;
 use ReflectionUnionType;
 use jars\contract\Exception;
+use jars\contract\LineValidationException;
 
 class Linetype
 {
@@ -382,7 +383,7 @@ class Linetype
         $this->complete($line);
 
         if ($errors = $this->validate($line)) {
-            throw new Exception('Invalid ' . $this->name . ': ' . implode('; ', $errors));
+            throw new LineValidationException('Invalid ' . $this->name . ': ' . implode('; ', $errors));
         }
 
         $is = $this->is($line);
