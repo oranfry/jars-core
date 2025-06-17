@@ -58,6 +58,15 @@ class Jars implements contract\Client
         return $keys;
     }
 
+    public function children(string $linetype): array
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        return $this->linetype($linetype)->childInfo();
+    }
+
     private static function classifier_value($classify, $line): array
     {
         if (is_callable($classify)) {
@@ -555,6 +564,7 @@ class Jars implements contract\Client
         $linetypes = array_map(fn ($name) => (object) [
             'name' => $name,
             'fields' => $this->fields($name),
+            'children' => $this->children($name),
         ], $names);
 
         return $linetypes;

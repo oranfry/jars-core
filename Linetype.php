@@ -79,6 +79,25 @@ class Linetype
         }
     }
 
+    public function childInfo(): array
+    {
+        $children = [];
+
+        foreach ($this->children as $child) {
+            if (isset($child->property, $child->linetype, $child->tablelink)) {
+                $children[] = (object) [
+                    'property' => @$child->property,
+                    'linetype' => @$child->linetype,
+                    'tablelink' => @$child->tablelink,
+                    'only_parent' => @$child->only_parent,
+                    'reverse' => (bool) ($child->reverse ?? false),
+                ];
+            }
+        }
+
+        return $children;
+    }
+
     public function clone_r($token, $line, $ignorelinks = [])
     {
         $clone = clone $line;
