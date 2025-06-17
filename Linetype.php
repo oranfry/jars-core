@@ -88,9 +88,6 @@ class Linetype
                 $children[] = (object) [
                     'property' => @$child->property,
                     'linetype' => @$child->linetype,
-                    'tablelink' => @$child->tablelink,
-                    'only_parent' => @$child->only_parent,
-                    'reverse' => (bool) ($child->reverse ?? false),
                 ];
             }
         }
