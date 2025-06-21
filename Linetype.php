@@ -88,6 +88,7 @@ class Linetype
                 $children[] = (object) [
                     'property' => @$child->property,
                     'linetype' => @$child->linetype,
+                    'only_parent' => @$child->only_parent,
                 ];
             }
         }
