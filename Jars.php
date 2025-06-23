@@ -1216,6 +1216,7 @@ class Jars implements contract\Client
             $reports[] = (object) [
                 'name' => $name,
                 'fields' => $fields,
+                'is_derived' => $report->is_derived(),
             ];
         }
 
