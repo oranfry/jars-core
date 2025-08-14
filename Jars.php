@@ -117,56 +117,44 @@ class Jars implements contract\Client
 
         $master_meta_file = $this->masterlog_meta_file();
 
-        if ($i_lock = !isset($this->locker_pin)) {
-            $this->lock();
+        $this->head = $this->db_version();
+
+        $version_number = $this->version_number_of($this->head);
+
+        // complain if this would cause concurrent modification
+
+        if ($modified_ids && $base_version !== $this->head) {
+            $from = $this->version_number_of($base_version) + 1;
+            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'` ?? ''));
+
+            $comodified_ids = array_map(
+                fn ($change) => preg_replace('/.*:/', '', $change),
+                array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
+            );
+
+            if (array_intersect($comodified_ids, $modified_ids)) {
+                throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
+            }
         }
 
-        // we have the floor!
+        $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
+        $meta_export = implode(' ', $meta);
 
-        try {
-            $this->head = $this->db_version();
+        $this->head = hash('sha256', $this->head . $master_export);
 
-            $version_number = $this->version_number_of($this->head);
+        $this->db_version($this->head);
+        $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
+        $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
+        $this->filesystem->append($this->masterlog_file(), $this->head . ' ' . $master_export . "\n");
 
-            // complain if this would cause concurrent modification
-
-            if ($modified_ids && $base_version !== $this->head) {
-                $from = $this->version_number_of($base_version) + 1;
-                $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'` ?? ''));
-
-                $comodified_ids = array_map(
-                    fn ($change) => preg_replace('/.*:/', '', $change),
-                    array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
-                );
-
-                if (array_intersect($comodified_ids, $modified_ids)) {
-                    throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
-                }
+        foreach ($saves as $save) {
+            if (!$save->record->oldrecord) {
+                $save->record->created_version = $this->head;
             }
 
-            $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
-            $meta_export = implode(' ', $meta);
+            $save->record->modified_version = $this->head;
 
-            $this->head = hash('sha256', $this->head . $master_export);
-
-            $this->db_version($this->head);
-            $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
-            $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
-            $this->filesystem->append($this->masterlog_file(), $this->head . ' ' . $master_export . "\n");
-
-            foreach ($saves as $save) {
-                if (!$save->record->oldrecord) {
-                    $save->record->created_version = $this->head;
-                }
-
-                $save->record->modified_version = $this->head;
-
-                $save->record->save();
-            }
-        } finally {
-            if ($i_lock) {
-                $this->unlock_internal();
-            }
+            $save->record->save();
         }
     }
 
@@ -423,6 +411,23 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
+        if ($i_lock = !$dryrun && !isset($this->locker_pin)) {
+            $this->lock();
+        }
+
+        // we have the floor!
+
+        try {
+            return $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
+        } finally {
+            if ($i_lock) {
+                $this->unlock_internal();
+            }
+        }
+    }
+
+    private function _import(string $timestamp, array $lines, ?string $base_version, bool $dryrun, ?int $logging, bool $differential): array
+    {
         $affecteds = [];
         $commits = [];
         $original_filesystem = clone $this->filesystem;
