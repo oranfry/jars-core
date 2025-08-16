@@ -1185,7 +1185,7 @@ class Jars implements contract\Client
             $report->filesystem($this->filesystem());
 
             if (method_exists($report, 'init')) {
-                $report->init($token);
+                $report->init();
             }
 
             $this->known['reports'][$name] = $report;
