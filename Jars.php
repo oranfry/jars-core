@@ -1132,6 +1132,7 @@ class Jars implements contract\Client
                             $cache[$derived_reportname][$derived_groupname],
                             $change_reportname,
                             $change_groupname,
+                            $derived_groupname,
                         );
 
                         $new_changed[$derived_reportname . '/' . $derived_groupname] = true;
