@@ -806,10 +806,6 @@ class Jars implements contract\Client
     {
         $this->filesystem->persist();
 
-        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-            echo "Persisted changes to filesystem (1)\n";
-        }
-
         return $this;
     }
 
@@ -1072,20 +1068,11 @@ class Jars implements contract\Client
                 $this->filesystem->put($report->version_file(), $bunny); // the greyhound has caught the bunny!
                 $this->filesystem->persist()->reset();
 
-                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                    echo "Persisted changes to filesystem (2)\n";
-                }
-
-
                 $this->head = $bunny;
             }
 
             $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
             $this->filesystem->persist()->reset();
-
-            if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                echo "Persisted changes to filesystem (3)\n";
-            }
         } finally {
             if ($i_lock) {
                 $this->unlock_internal();
@@ -1339,10 +1326,6 @@ class Jars implements contract\Client
         }
 
         $this->filesystem->persist()->reset();
-
-        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-            echo "Persisted changes to filesystem (4)\n";
-        }
 
         ftruncate($this->touch_handle, 0);
         fwrite($this->touch_handle, microtime(true));

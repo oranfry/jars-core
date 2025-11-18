@@ -112,6 +112,8 @@ class Filesystem
             throw new Exception('Attempt made to persist to no-persist filesystem');
         }
 
+        $workDone = false;
+
         foreach ($this->store as $file => $details) {
             if (!$details->dirty) {
                 continue;
@@ -121,14 +123,21 @@ class Filesystem
                 @mkdir(dirname($file), 0777, true);
                 file_put_contents($file, $details->content, FILE_APPEND);
                 $details->content = null;
+                $workDone = true;
             } elseif ($details->content !== null) {
                 @mkdir(dirname($file), 0777, true);
                 file_put_contents($file, $details->content);
+                $workDone = true;
             } elseif (is_file($file)) {
                 unlink($file);
+                $workDone = true;
             }
 
             $details->dirty = false;
+        }
+
+        if (defined('JARS_VERBOSE') && JARS_VERBOSE && $workDone) {
+            echo "Persisted changes to filesystem\n";
         }
 
         return $this;
