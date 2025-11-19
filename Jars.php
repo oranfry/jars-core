@@ -907,11 +907,6 @@ class Jars implements contract\Client
 
             foreach (array_keys($this->config->reports()) as $report_name) {
                 $report = $this->report($report_name);
-
-                if ($report->is_fully_derived()) {
-                    continue;
-                }
-
                 $greyhound = $report->version($greyhound_number);
 
                 if ($greyhound && $bunny == $greyhound) {
