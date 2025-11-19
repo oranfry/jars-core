@@ -107,6 +107,19 @@ abstract class Report
         return false;
     }
 
+    public function is_fully_derived(): bool
+    {
+        foreach ($this->listen as $key => $value) {
+            $linetype = is_numeric($key) ? $value : $key;
+
+            if (!preg_match('/^report:/', $linetype)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public function jars(?Jars $jars = null): null|Jars|self
     {
         if (func_num_args()) {

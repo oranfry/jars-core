@@ -907,6 +907,11 @@ class Jars implements contract\Client
 
             foreach (array_keys($this->config->reports()) as $report_name) {
                 $report = $this->report($report_name);
+
+                if ($report->is_fully_derived()) {
+                    continue;
+                }
+
                 $greyhound = $report->version($greyhound_number);
 
                 if ($greyhound && $bunny == $greyhound) {
@@ -914,7 +919,7 @@ class Jars implements contract\Client
                 }
 
                 if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                    echo "Refreshing report $report_name [$greyhound_number → $bunny_number]\n";
+                    error_log("Refreshing report $report_name [$greyhound_number → $bunny_number]");
                 }
 
                 if ($bunny_number > $greyhound_number) {
@@ -1129,7 +1134,7 @@ class Jars implements contract\Client
                         $cache[$derived_reportname][$derived_groupname] ??= $this->group($derived_reportname, $derived_groupname);
 
                         if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                            echo "Refreshing derived report $derived_reportname from $change_reportname/$change_groupname to derived group $derived_groupname\n";
+                            error_log("Refreshing derived report $derived_reportname from $change_reportname/$change_groupname to derived group $derived_groupname");
                         }
 
                         $cache[$derived_reportname][$derived_groupname] = $derived_report->handle(
