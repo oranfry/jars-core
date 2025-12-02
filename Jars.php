@@ -690,19 +690,11 @@ class Jars implements contract\Client
         return $this->locker_pin = bin2hex(random_bytes(32));
     }
 
-    public function login(string $username, string $password, bool $one_time = false): ?string
+    public function login(?string $username = null, ?string $password = null, bool $one_time = false): ?string
     {
         $start = microtime(true) * 1e6;
 
         try {
-            if (!$this->validate_username($username)) {
-                throw new BadUsernameOrPasswordException('Invalid username');
-            }
-
-            if (!$this->validate_password($password)) {
-                throw new BadUsernameOrPasswordException('Invalid password');
-            }
-
             if (!$this->config->credentialsCorrect($username, $password)) {
                 throw new BadUsernameOrPasswordException('Unknown username or incorrect password');
             }
