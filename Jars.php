@@ -1074,7 +1074,7 @@ class Jars implements contract\Client
             $this->head = $bunny;
         } finally {
             if ($i_lock) {
-                $this->unlock_internal();
+                $this->unlock_internal(false);
             }
         }
 
@@ -1331,7 +1331,7 @@ class Jars implements contract\Client
         }
     }
 
-    public function unlock(string $locker_pin): void
+    public function unlock(string $locker_pin, bool $do_touch = true): void
     {
         if (!$this->touch_handle) {
             throw new Exception('Attempt to unlock when not locked');
@@ -1343,17 +1343,20 @@ class Jars implements contract\Client
 
         $this->filesystem->persist()->reset();
 
-        ftruncate($this->touch_handle, 0);
-        fwrite($this->touch_handle, microtime(true));
+        if ($do_touch) {
+            ftruncate($this->touch_handle, 0);
+            fwrite($this->touch_handle, microtime(true));
+        }
+
         fclose($this->touch_handle);
 
         $this->touch_handle = null;
         $this->locker_pin = null;
     }
 
-    private function unlock_internal(): void
+    private function unlock_internal(bool $touch = true): void
     {
-        $this->unlock($this->locker_pin);
+        $this->unlock($this->locker_pin, $touch);
     }
 
     public static function validate_password(string $password): bool
