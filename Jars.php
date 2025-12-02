@@ -537,6 +537,23 @@ class Jars implements contract\Client
         return $lines;
     }
 
+    public function info(?string $varname = null): array|string|null
+    {
+        $info = [
+            'config_class' => get_class($this->config),
+            'db_home' => $this->db_home,
+            'touch_file' => $this->touch_file(),
+        ];
+
+        $info['connection_string'] = "local:$info[config_class],$info[db_home]";
+
+        if ($varname !== null) {
+            return $info[strtolower($varname)] ?? null;
+        }
+
+        return $info;
+    }
+
     public function linetype(string $name): object
     {
         if (!isset($this->known['linetypes'][$name])) {
@@ -675,7 +692,7 @@ class Jars implements contract\Client
 
         // TODO: Implement timeout using non-blocking locking in a loop until
 
-        if (!($this->touch_handle = fopen($this->db_home . '/touch.dat', 'a'))) {
+        if (!($this->touch_handle = fopen($this->touch_file(), 'a'))) {
             throw new Exception('Could not open the touch file');
         }
 
@@ -1300,6 +1317,11 @@ class Jars implements contract\Client
         return (object) [
             'timestamp' => time(),
         ];
+    }
+
+    private function touch_file(): string
+    {
+        return $this->db_home . '/touch.dat';
     }
 
     public function trigger(string $event, ...$arguments): void
