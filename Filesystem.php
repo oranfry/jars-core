@@ -46,7 +46,7 @@ class Filesystem
         $this->store = $store;
     }
 
-    public function put(string $file, $content)
+    public function put(string $file, $content, int $priority = 100)
     {
         if ($this->read_only) {
             throw new Exception('Attempt made to modify read-only filesystem');
@@ -56,6 +56,7 @@ class Filesystem
             'mode' => 'overwrite',
             'content' => $content,
             'dirty' => true,
+            'priority' => $priority,
         ];
     }
 
@@ -77,7 +78,7 @@ class Filesystem
         return is_file($file);
     }
 
-    public function delete(string $file)
+    public function delete(string $file, int $priority = 100)
     {
         if ($this->read_only) {
             throw new Exception('Attempt made to modify read-only filesystem');
@@ -87,6 +88,7 @@ class Filesystem
             'content' => null,
             'mode' => 'overwrite',
             'dirty' => true,
+            'priority' => $priority,
         ];
     }
 
@@ -112,6 +114,7 @@ class Filesystem
             throw new Exception('Attempt made to persist to no-persist filesystem');
         }
 
+        $dirtyByPriority = [];
         $workDone = (object) ['add' => 0, 'delete' => 0, 'append' => 0];
 
         foreach ($this->store as $file => $details) {
@@ -119,21 +122,29 @@ class Filesystem
                 continue;
             }
 
-            if ($details->mode === 'append') {
-                @mkdir(dirname($file), 0777, true);
-                file_put_contents($file, $details->content, FILE_APPEND);
-                $details->content = null;
-                $workDone->append++;
-            } elseif ($details->content !== null) {
-                @mkdir(dirname($file), 0777, true);
-                file_put_contents($file, $details->content);
-                $workDone->add++;
-            } elseif (is_file($file)) {
-                unlink($file);
-                $workDone->delete++;
-            }
+            $dirtyByPriority[$details->priority][$file] = $details;
+        }
 
-            $details->dirty = false;
+        ksort($dirtyByPriority);
+
+        foreach ($dirtyByPriority as $priority => $subStore) {
+            foreach ($subStore as $file => $details) {
+                if ($details->mode === 'append') {
+                    @mkdir(dirname($file), 0777, true);
+                    file_put_contents($file, $details->content, FILE_APPEND);
+                    $details->content = null;
+                    $workDone->append++;
+                } elseif ($details->content !== null) {
+                    @mkdir(dirname($file), 0777, true);
+                    file_put_contents($file, $details->content);
+                    $workDone->add++;
+                } elseif (is_file($file)) {
+                    unlink($file);
+                    $workDone->delete++;
+                }
+
+                $details->dirty = false;
+            }
         }
 
         if (defined('JARS_VERBOSE') && JARS_VERBOSE && ($workDone->delete + $workDone->add + $workDone->append)) {
@@ -185,7 +196,7 @@ class Filesystem
         return $this->store;
     }
 
-    public function append(string $file, $content)
+    public function append(string $file, $content, ?int $priority = null)
     {
         if ($this->read_only) {
             throw new Exception('Attempt made to modify read-only filesystem');
@@ -199,6 +210,13 @@ class Filesystem
             ];
         } elseif ($this->store[$file]->mode !== 'append') {
             $this->switch_mode($file);
+        }
+
+        if (
+            $priority !== null
+            || @$this->store[$file]->priority === null
+        ) {
+            $this->store[$file]->priority = $priority ?? 100;
         }
 
         if ($content === null) {

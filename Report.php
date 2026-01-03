@@ -8,9 +8,14 @@ use jars\contract\VersionTimeoutException;
 
 abstract class Report
 {
-    const DEFAULT = [];
+    const DEFAULT_VALUE = [];
+
+    const DEFAULT_TIMEOUT = 100000000;
 
     const ENCODING_OPTIONS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
+
+    // php -r '$_wt = [1, 10, 10, 10, 10, 10, 100, 200, 200, 500]; echo "    const VERSION_WAIT_TRIES = [" . implode(", ", array_map(fn ($try) => $try / array_sum($_wt), $_wt)) . "];\n";'
+    const VERSION_WAIT_TRIES = [0.00095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.095147478591817, 0.19029495718363, 0.19029495718363, 0.47573739295909];
 
     protected $filesystem;
     protected $jars;
@@ -50,31 +55,31 @@ abstract class Report
         return $this->filesystem;
     }
 
-    public function get(string $group, ?string $min_version = null)
+    public function get(string $group, ?string $min_version = null, ?int $timeout_microseconds = null)
     {
         if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
             throw new Exception('Invalid group');
         }
 
         if ($min_version !== null) {
-            $this->wait_for_version($min_version);
+            $this->wait_for_version($min_version, $timeout_microseconds);
         }
 
         if (!$diskContent = $this->filesystem->get($this->file($group))) {
-            return static::DEFAULT;
+            return static::DEFAULT_VALUE;
         }
 
         return json_decode($diskContent);
     }
 
-    public function groups(string $prefix = '', ?string $min_version = null): array
+    public function groups(string $prefix = '', ?string $min_version = null, ?int $timeout_microseconds = null): array
     {
         if (!preg_match('/^' . Constants::GROUP_PREFIX_PATTERN . '$/', $prefix)) {
             throw new Exception('Invalid prefix');
         }
 
         if ($min_version !== null) {
-            $this->wait_for_version($min_version);
+            $this->wait_for_version($min_version, $timeout_microseconds);
         }
 
         return json_decode($this->filesystem->get($this->groupsfile($prefix)) ?? '[]');
@@ -201,7 +206,7 @@ abstract class Report
         $export = json_encode($data, static::ENCODING_OPTIONS);
         $reportfile = $this->file($group);
 
-        if ($exists = $export !== json_encode(static::DEFAULT, static::ENCODING_OPTIONS)) {
+        if ($exists = $export !== json_encode(static::DEFAULT_VALUE, static::ENCODING_OPTIONS)) {
             $this->filesystem->put($reportfile, $export);
         } else {
             $this->filesystem->delete($reportfile);
@@ -257,27 +262,14 @@ abstract class Report
         return false;
     }
 
-    private function wait_for_version(string $min_version)
+    private function wait_for_version(string $min_version, ?int $timeout_microseconds = null): void
     {
         if (!preg_match('/^[a-f0-9]{64}$/', $min_version)) {
             throw new Exception('Invalid minimum version [' . $min_version . ']');
         }
 
-        $tries = [
-            10000,
-            100000,
-            100000,
-            100000,
-            100000,
-            100000,
-            1000000,
-            2000000,
-            2000000,
-            5000000,
-        ];
-
-        foreach ($tries as $try) {
-            if ($this->version_requirement_met($min_version, $try, $feedback)) {
+        foreach (static::VERSION_WAIT_TRIES as $try) {
+            if ($this->version_requirement_met($min_version, (int) ($try * ($timeout_microseconds ?? static::DEFAULT_TIMEOUT)), $feedback)) {
                 return;
             }
         }

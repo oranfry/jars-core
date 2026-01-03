@@ -173,7 +173,7 @@ class Jars implements contract\Client
         $db_version_file = $this->db_path('version.dat');
 
         if (func_num_args()) {
-            $this->filesystem->put($db_version_file, $new);
+            $this->filesystem->put($db_version_file, $new, 200);
 
             return $this;
         }
