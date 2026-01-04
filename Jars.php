@@ -843,9 +843,9 @@ class Jars implements contract\Client
                 $direction = ($relationship->reverse ?? false) ? 'forth' : 'back';
                 $lost_relatives = $relatives[$relationship->tablelink][$direction][$id] ?? [];
                 $current_relatives = Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)->relatives();
-                $relatives = array_unique(array_merge($lost_relatives, $current_relatives));
+                $_relatives = array_unique(array_merge($lost_relatives, $current_relatives));
 
-                foreach ($relatives as $relative_id) {
+                foreach ($_relatives as $relative_id) {
                     $relative_linetype = $this->linetype($relationship->parent_linetype);
                     $table_name = $relative_linetype->table;
 
@@ -954,7 +954,7 @@ class Jars implements contract\Client
                 throw new Exception('Problem reading master log meta file');
             }
 
-            $metas = array_map(fn () => explode(' ', fgets($pipes[1])), array_fill($from, $length, null));
+            $metas = array_map(fn () => explode(' ', rtrim(fgets($pipes[1]), "\n")), array_fill($from, $length, null));
 
             fclose($pipes[1]);
             proc_close($process);
