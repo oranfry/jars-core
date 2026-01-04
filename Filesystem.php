@@ -115,7 +115,7 @@ class Filesystem
         }
 
         $dirtyByPriority = [];
-        $workDone = (object) ['add' => 0, 'delete' => 0, 'append' => 0];
+        $workDone = ['add' => 0, 'delete' => 0, 'append' => 0];
 
         foreach ($this->store as $file => $details) {
             if (!$details->dirty) {
@@ -133,23 +133,23 @@ class Filesystem
                     @mkdir(dirname($file), 0777, true);
                     file_put_contents($file, $details->content, FILE_APPEND);
                     $details->content = null;
-                    $workDone->append++;
+                    $workDone['append']++;
                 } elseif ($details->content !== null) {
                     @mkdir(dirname($file), 0777, true);
                     file_put_contents($file, $details->content);
-                    $workDone->add++;
+                    $workDone['add']++;
                 } elseif (is_file($file)) {
                     unlink($file);
-                    $workDone->delete++;
+                    $workDone['delete']++;
                 }
 
                 $details->dirty = false;
             }
         }
 
-        if (defined('JARS_VERBOSE') && JARS_VERBOSE && ($workDone->delete + $workDone->add + $workDone->append)) {
+        if (defined('JARS_VERBOSE') && JARS_VERBOSE && ($workDone['delete'] + $workDone['add'] + $workDone['append'])) {
             $message = "Persisted changes to filesystem ";
-            $message .= str_repeat('+', $workDone->add) . str_repeat('.', $workDone->append) . str_repeat('-', $workDone->delete);
+            $message .= implode(' ', array_map(fn ($action) => match ($action) { 'add' => '+', 'append' => '.', 'delete' => '-' } . $workDone[$action] , array_keys(array_filter($workDone))));
 
             error_log($message);
         }
