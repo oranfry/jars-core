@@ -112,6 +112,19 @@ abstract class Report
         return false;
     }
 
+    public function is_fully_derived(): bool
+    {
+        foreach ($this->listen as $key => $value) {
+            $linetype = is_numeric($key) ? $value : $key;
+
+            if (!preg_match('/^report:/', $linetype)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public function jars(?Jars $jars = null): null|Jars|self
     {
         if (func_num_args()) {
@@ -234,6 +247,25 @@ abstract class Report
         });
     }
 
+    public function version(&$as_number = null, &$file = null): ?string
+    {
+        if (!$this->filesystem->has($file = $this->version_file())) {
+            $as_number = 0;
+
+            return null;
+        }
+
+        $version = $this->filesystem->get($file);
+        $as_number = (int) $this->filesystem->get($this->jars->db_path('versions/' . $version));
+
+        return $version;
+    }
+
+    public function version_file(): string
+    {
+        return $this->jars->db_path("reports/$this->name/version.dat");
+    }
+
     private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])
     {
         $min_version_file = $this->jars->db_path('versions/' . $min_version);
@@ -244,7 +276,8 @@ abstract class Report
             throw new Exception('No such version');
         }
 
-        $current_version = $feedback['current_version'] = $this->filesystem->get($version_file = $this->jars->db_path("reports/version.dat"));
+        $version_file = $this->version_file();
+        $current_version = $feedback['current_version'] = $this->filesystem->get($version_file);
 
         $this->filesystem->forget($version_file);
 

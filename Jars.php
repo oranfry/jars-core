@@ -362,11 +362,10 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $group = $this
-            ->report($report_name)
-            ->get($group, $min_version === true ? $this->head : ($min_version ?: null));
+        $report = $this->report($report_name);
+        $group = $report->get($group, $min_version === true ? $this->head : ($min_version ?: null));
 
-        $this->head = $this->reports_version();
+        $this->head = $report->version();
 
         return $group;
     }
@@ -377,11 +376,10 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $groups = $this
-            ->report($report_name)
-            ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
+        $report = $this->report($report_name);
+        $groups = $report->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
 
-        $this->head = $this->reports_version();
+        $this->head = $report->version();
 
         return $groups;
     }
@@ -913,84 +911,120 @@ class Jars implements contract\Client
         // we have the floor!
 
         try {
-            $bunny = $this->filesystem->get($this->db_path('version.dat'));
+            $bunny = $this->db_version();
             $bunny_number = (int) $this->filesystem->get($this->db_path('versions/' . $bunny));
-            $greyhound = $this->reports_version($greyhound_number);
-
-            if ($greyhound && $bunny == $greyhound) {
-                $this->head = $greyhound;
-
-                return $greyhound;
-            }
-
-            if ($bunny_number > $greyhound_number) {
-                $from = $greyhound_number + 1;
-                $direction = 'forward';
-                $sorter = null;
-            } else {
-                $from = $bunny_number + 1;
-                $direction = 'back';
-                $sorter = 'array_reverse';
-            }
-
-            $length = abs($bunny_number - $greyhound_number);
-            $master_meta_file = $this->db_path('master.dat.meta');
-            $metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | head -n $length | cut -c66- | sed 's/ /\\n/g'` ?? ''));
-
-            if ($sorter) {
-                $metas = $sorter($metas);
-            }
-
-            $changes = [];
-            $relatives = [];
-
-            foreach ($metas as $meta) {
-                // connection
-
-                if (preg_match('/^>/', $meta)) {
-                    continue;
-                }
-
-                // disconnection - keep track of linked record ids
-
-                if (preg_match('/^<([^:,]+):([^:,]+),([^:,]+)$/', $meta, $matches)) {
-                    [, $tablelink, $left, $right] = $matches;
-
-                    $relatives[$tablelink]['forth'][$left][] = $right;
-                    $relatives[$tablelink]['back'][$right][] = $left;
-                    continue;
-                }
-
-                if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
-                    throw new Exception('Invalid meta line: ' . $meta);
-                }
-
-                [, $sign, $table, $id] = $matches;
-
-                if (!isset($changes[$id])) {
-                    $changes[$id] = (object) [
-                        'table' => $table,
-                    ];
-                }
-
-                $changes[$id]->sign = $sign;
-            }
-
-            $lines_cache = [];
-            $childsets = [];
-
-            // propagate
-
-            if ($greyhound) {
-                foreach ($changes as $id => $change) {
-                    $this->propagate_r($change->table, $id, $relatives, $changes);
-                }
-            }
-
             $changed_reports = [];
+
+            // preload the metas we need
+
+            $from = INF;
 
             foreach (array_keys($this->config->reports()) as $report_name) {
                 $report = $this->report($report_name);
+
+                if ($report->is_fully_derived()) {
+                    continue;
+                }
+
+                $greyhound = $report->version($greyhound_number) ?? static::INITIAL_VERSION;;
+
+                if ($greyhound_number < $from) {
+                    $from = $greyhound_number;
+                    $from_greyhound = $greyhound;
+                }
+            }
+
+            $length = $bunny_number - $from;
+
+            if (!$length) {
+                // nothing to do
+
+                return $bunny;
+            }
+
+            if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                error_log("Refreshing $from_greyhound ($from) ~ $bunny ($bunny_number) (Δ $length)...");
+            }
+
+            $master_meta_file = $this->db_path('master.dat.meta');
+            $command = "cat '$master_meta_file' | tail -n +" . ($from + 1) . " | head -n $length | cut -c66-";
+            $process = proc_open($command, [1 => ['pipe', 'w']], $pipes);
+
+            if (!is_resource($process)) {
+                throw new Exception('Problem reading master log meta file');
+            }
+
+            $metas = array_map(fn () => explode(' ', fgets($pipes[1])), array_fill($from, $length, null));
+
+            fclose($pipes[1]);
+            proc_close($process);
+
+            foreach (array_keys($this->config->reports()) as $report_name) {
+                $report = $this->report($report_name);
+
+                if ($report->is_fully_derived()) {
+                    continue;
+                }
+
+                $greyhound = $report->version($greyhound_number);
+
+                if ($greyhound && $bunny == $greyhound) {
+                    continue;
+                }
+
+                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                    error_log("Refreshing report $report_name [$greyhound_number → $bunny_number]");
+                }
+
+                $changes = [];
+                $relatives = [];
+
+                for ($version_number = $greyhound_number; $version_number <= $bunny_number - 1; $version_number++) {
+                    foreach ($metas[$version_number] as $meta) {
+                        // connection
+
+                        if (preg_match('/^>/', $meta)) {
+                            continue;
+                        }
+
+                        // disconnection - keep track of linked record ids
+
+                        if (preg_match('/^<([^:,]+):([^:,]+),([^:,]+)$/', $meta, $matches)) {
+                            [, $tablelink, $left, $right] = $matches;
+
+                            $relatives[$tablelink]['forth'][$left][] = $right;
+                            $relatives[$tablelink]['back'][$right][] = $left;
+                            continue;
+                        }
+
+                        if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
+                            throw new Exception('Invalid meta line: ' . $meta);
+                        }
+
+                        [, $sign, $table, $id] = $matches;
+
+                        if (!isset($changes[$id])) {
+                            $changes[$id] = (object) [
+                                'table' => $table,
+                            ];
+                        }
+
+                        $changes[$id]->sign = $sign;
+                    }
+                }
+
+                $lines_cache = [];
+                $childsets = [];
+
+                // propagate
+
+                if ($greyhound) {
+                    foreach ($changes as $id => $change) {
+                        $this->propagate_r($change->table, $id, $relatives, $changes);
+                    }
+                }
+
+                $report_affected = false;
 
                 foreach ($changes as $id => $change) {
                     foreach ($report->listen as $linetype => $listen) {
@@ -1006,6 +1040,8 @@ class Jars implements contract\Client
                         if ($change->table != $this->linetype($linetype)->table) {
                             continue;
                         }
+
+                        $report_affected = true;
 
                         $current_groups = [];
                         $past_groups = [];
@@ -1073,14 +1109,16 @@ class Jars implements contract\Client
                         }
                     }
                 }
+
+                if ($report_affected) {
+                    $this->filesystem->put($report->version_file(), $bunny, 200); // the greyhound has caught the bunny!
+                    $this->filesystem->persist()->reset();
+                }
             }
 
-            $this->filesystem->put($this->reports_version_file(), $bunny); // the greyhound has caught the bunny!
+            $this->head = $bunny;
 
             $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
-            $this->filesystem->persist()->reset();
-
-            $this->head = $bunny;
         } finally {
             if ($i_lock) {
                 $this->unlock_internal(false);
@@ -1101,6 +1139,8 @@ class Jars implements contract\Client
         foreach (array_keys($this->config->reports()) as $derived_reportname) {
             $derived_report = $this->report($derived_reportname);
 
+            $report_affected = false;
+
             foreach ($changed as $change_report_group) {
                 [$change_reportname, $change_groupname] = explode('/', $change_report_group, 2);
 
@@ -1120,6 +1160,8 @@ class Jars implements contract\Client
                         continue;
                     }
 
+                    $report_affected = true;
+
                     try {
                         if (property_exists($listen, 'classify') && $listen->classify) {
                             $derived_groupnames = @static::classifier_value($listen->classify, $change_groupname);
@@ -1135,6 +1177,10 @@ class Jars implements contract\Client
                     foreach ($derived_groupnames as $derived_groupname) {
                         $cache[$change_reportname][$change_groupname] ??= $this->group($change_reportname, $change_groupname, $version);
                         $cache[$derived_reportname][$derived_groupname] ??= $this->group($derived_reportname, $derived_groupname);
+
+                        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                            error_log("Refreshing derived report $derived_reportname from $change_reportname/$change_groupname to derived group $derived_groupname");
+                        }
 
                         $cache[$derived_reportname][$derived_groupname] = $derived_report->handle(
                             $cache[$change_reportname][$change_groupname],
@@ -1167,6 +1213,11 @@ class Jars implements contract\Client
                         $derived_report->maintain_groups($derived_groupname, $exists);
                     }
                 }
+            }
+
+            if ($report_affected) {
+                $this->filesystem->put($derived_report->version_file(), $version, 200); // the greyhound has caught the bunny!
+                $this->filesystem->persist()->reset();
             }
         }
 
@@ -1238,27 +1289,6 @@ class Jars implements contract\Client
         usort($reports, fn ($a, $b) => $a->name <=> $b->name);
 
         return $reports;
-    }
-
-    private function reports_version(&$as_number = null, &$file = null): ?string
-    {
-        $file = $this->reports_version_file();
-
-        if (!$this->filesystem->has($file)) {
-            $as_number = 0;
-
-            return null;
-        }
-
-        $version = $this->filesystem->get($file);
-        $as_number = (int) $this->filesystem->get($this->db_path('versions/' . $version));
-
-        return $version;
-    }
-
-    private function reports_version_file(): string
-    {
-        return $this->db_path('reports/version.dat');
     }
 
     public function save(array $lines, ?string $base_version = null): array
