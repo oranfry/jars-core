@@ -58,13 +58,13 @@ class Jars implements contract\Client
         return $keys;
     }
 
-    public function children(string $linetype): array
+    public function children(string $linetype_name): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        return $this->linetype($linetype)->childInfo();
+        return $this->linetype($linetype_name)->childInfo();
     }
 
     private static function classifier_value($classify, $line): array
@@ -232,7 +232,7 @@ class Jars implements contract\Client
         static::$debug_node = static::$debug_node->parent;
     }
 
-    public function delete(string $linetype, string $id): array
+    public function delete(string $linetype_name, string $id): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -240,7 +240,7 @@ class Jars implements contract\Client
 
         $this->head = $this->db_version();
 
-        return $this->linetype($linetype)->delete($id);
+        return $this->linetype($linetype_name)->delete($id);
     }
 
     private function dredge_r(array $lines): array
@@ -270,13 +270,13 @@ class Jars implements contract\Client
         return $dredged;
     }
 
-    public function fields(string $linetype): array
+    public function fields(string $linetype_name): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        return $this->linetype($linetype)->fieldInfo();
+        return $this->linetype($linetype_name)->fieldInfo();
     }
 
     public function filesystem(?Filesystem $filesystem = null): null|Filesystem|self
@@ -290,7 +290,7 @@ class Jars implements contract\Client
         return $this->filesystem;
     }
 
-    public function find_table_linetypes(string $table): array
+    public function find_table_linetypes(string $table_name): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -301,7 +301,7 @@ class Jars implements contract\Client
         foreach (array_keys($this->config->linetypes()) as $linetype_name) {
             $linetype = $this->linetype($linetype_name);
 
-            if ($linetype->table === $table) {
+            if ($linetype->table === $table_name) {
                 $found[] = $linetype;
             }
         }
@@ -330,7 +330,7 @@ class Jars implements contract\Client
         return $return;
     }
 
-    public function get(string $linetype, string $id): ?object
+    public function get(string $linetype_name, string $id): ?object
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -338,7 +338,7 @@ class Jars implements contract\Client
 
         $this->head = $this->db_version();
 
-        $line = $this->linetype($linetype)->get($this->token, $id);
+        $line = $this->linetype($linetype_name)->get($this->token, $id);
 
         if (!$line) {
             return null;
@@ -347,23 +347,23 @@ class Jars implements contract\Client
         return $line;
     }
 
-    public function get_childset(string $linetype, string $id, string $property): array
+    public function get_childset(string $linetype_name, string $id, string $property): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        return $this->linetype($linetype)->get_childset($this->token, $id, $property, $lines_cache);
+        return $this->linetype($linetype_name)->get_childset($this->token, $id, $property, $lines_cache);
     }
 
-    public function group(string $report, string $group = '', string|bool|null $min_version = null)
+    public function group(string $report_name, string $group = '', string|bool|null $min_version = null)
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
         $group = $this
-            ->report($report)
+            ->report($report_name)
             ->get($group, $min_version === true ? $this->head : ($min_version ?: null));
 
         $this->head = $this->reports_version();
@@ -371,14 +371,14 @@ class Jars implements contract\Client
         return $group;
     }
 
-    public function groups(string $report, string $prefix = '', string|bool|null $min_version = null): array
+    public function groups(string $report_name, string $prefix = '', string|bool|null $min_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
         $groups = $this
-            ->report($report)
+            ->report($report_name)
             ->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
 
         $this->head = $this->reports_version();
@@ -578,20 +578,20 @@ class Jars implements contract\Client
         return $this->known['linetypes'][$name];
     }
 
-    public function linetypes(?string $report = null): array
+    public function linetypes(?string $report_name = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        if ($report) {
-            if (!array_key_exists($report, $this->config->reports())) {
-                throw new Exception('No such report [' . $report . ']');
+        if ($report_name) {
+            if (!array_key_exists($report_name, $this->config->reports())) {
+                throw new Exception('No such report [' . $report_name . ']');
             }
 
             $names = [];
 
-            foreach ($this->report($report)->listen as $key => $value) {
+            foreach ($this->report($report_name)->listen as $key => $value) {
                 $name = is_string($value) ? $value : $key;
 
                 if (!preg_match('/^report:/', $name)) {
@@ -874,18 +874,18 @@ class Jars implements contract\Client
         }
     }
 
-    public function record(string $table, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
+    public function record(string $table_name, string $id, ?string &$content_type = null, ?string &$filename = null): ?string
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        $tableinfo = $this->config->tables()[$table] ?? null;
+        $tableinfo = $this->config->tables()[$table_name] ?? null;
         $ext = $tableinfo->extension ?? 'json';
         $filename = $id . ($ext ? '.' . $ext : null);
         $content_type = $tableinfo->content_type ?? 'application/json';
 
-        if (!is_file($file = $this->db_path('records/' . $table . '/' . $filename))) {
+        if (!is_file($file = $this->db_path('records/' . $table_name . '/' . $filename))) {
             return null;
         }
 
