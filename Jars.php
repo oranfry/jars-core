@@ -831,9 +831,9 @@ class Jars implements contract\Client
         return $this->import(date('Y-m-d H:i:s'), $lines, $base_version, true);
     }
 
-    private function propagate_r(string $table, string $id, array &$relatives, array &$changes = [], array &$seen = []): void
+    private function propagate_r(string $table_name, string $id, array &$relatives, array &$changes = [], array &$seen = []): void
     {
-        foreach ($this->find_table_linetypes($table) as $linetype) {
+        foreach ($this->find_table_linetypes($table_name) as $linetype) {
             $relationships = array_merge(
                 $linetype->find_incoming_links(),
                 $linetype->find_incoming_inlines(),
@@ -847,14 +847,14 @@ class Jars implements contract\Client
 
                 foreach ($relatives as $relative_id) {
                     $relative_linetype = $this->linetype($relationship->parent_linetype);
-                    $table = $relative_linetype->table;
+                    $table_name = $relative_linetype->table;
 
-                    if (!Record::of($this, $table, $relative_id)->exists()) {
+                    if (!Record::of($this, $table_name, $relative_id)->exists()) {
                         continue;
                     }
 
                     $change = (object) [
-                        'table' => $table,
+                        'table' => $table_name,
                         'sign' => '*',
                     ];
 
@@ -862,10 +862,10 @@ class Jars implements contract\Client
                         $changes[$relative_id] = $change;
                     }
 
-                    if (!isset($seen[$key = $table . ':' . $relative_id])) {
+                    if (!isset($seen[$key = $table_name . ':' . $relative_id])) {
                         $seen[$key] = true;
 
-                        $this->propagate_r($table, $relative_id, $relatives, $changes, $seen);
+                        $this->propagate_r($table_name, $relative_id, $relatives, $changes, $seen);
                     }
                 }
             }
