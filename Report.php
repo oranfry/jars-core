@@ -256,7 +256,7 @@ abstract class Report
         }
 
         $version = $this->filesystem->get($file);
-        $as_number = (int) $this->filesystem->get($this->jars->db_path('versions/' . $version));
+        $as_number = (int) $this->filesystem->get($this->jars->version_file($version));
 
         return $version;
     }
@@ -268,7 +268,7 @@ abstract class Report
 
     private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])
     {
-        $min_version_file = $this->jars->db_path('versions/' . $min_version);
+        $min_version_file = $this->jars->version_file($min_version);
 
         if (null === $min_version_raw = $this->filesystem->get($min_version_file)) {
             $this->filesystem->forget($min_version_file);
@@ -282,7 +282,7 @@ abstract class Report
         $this->filesystem->forget($version_file);
 
         $min_version_num = $feedback['min_version_num'] = (int) $min_version_raw;
-        $current_version_number = $feedback['current_version_number'] = (int) $this->filesystem->get($this->jars->db_path('versions/' . $current_version));
+        $current_version_number = $feedback['current_version_number'] = (int) $this->filesystem->get($this->jars->version_file($current_version));
 
         if ($current_version_number >= $min_version_num) {
             return true;

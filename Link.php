@@ -48,7 +48,18 @@ class Link
 
     private function file()
     {
-        return $this->jars->db_path('links/' . $this->name . '/' . $this->direction() . '/' . $this->id . '.json');
+        $numSubParts = 2;
+        $subPartLength = 2;
+
+        $subParts = [];
+
+        for ($p = 0; $p < $numSubParts; $p++) {
+            $subParts[] = substr($this->id, $subPartLength * $p, $subPartLength);
+        }
+
+        $subdir = implode('/', $subParts);
+
+        return $this->jars->db_path('links/' . $this->name . '/' . $this->direction() . '/' . $subdir . '/' . $this->id . '.json');
     }
 
     private function load(): self

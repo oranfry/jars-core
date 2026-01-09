@@ -109,8 +109,6 @@ class Jars implements contract\Client
 
         $modified_ids = array_diff($this->meta_ids($nonadd_meta), $this->meta_ids($add_meta));
 
-        @mkdir($version_dir = $this->db_home . '/versions', 0777, true);
-
         if ($modified_ids && !$base_version) {
             throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: none");
         }
@@ -143,7 +141,7 @@ class Jars implements contract\Client
         $this->head = hash('sha256', $this->head . $master_export);
 
         $this->db_version($this->head);
-        $this->filesystem->put($version_dir . '/' . $this->head, $version_number + 1);
+        $this->filesystem->put($this->version_file($this->head), $version_number + 1);
         $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
         $this->filesystem->append($this->masterlog_file(), $this->head . ' ' . $master_export . "\n");
 
@@ -878,18 +876,14 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $tableinfo = $this->config->tables()[$table_name] ?? null;
-        $ext = $tableinfo->extension ?? 'json';
-        $filename = $id . ($ext ? '.' . $ext : null);
-        $content_type = $tableinfo->content_type ?? 'application/json';
+        $contents = Record::of($this, $table_name, $id)
+            ->currentContents();
 
-        if (!is_file($file = $this->db_path('records/' . $table_name . '/' . $filename))) {
-            return null;
+        if ($contents !== null) {
+            $this->head = $this->db_version();
         }
 
-        $this->head = $this->db_version();
-
-        return file_get_contents($file);
+        return $contents;
     }
 
     public function refresh(): string
@@ -912,7 +906,7 @@ class Jars implements contract\Client
 
         try {
             $bunny = $this->db_version();
-            $bunny_number = (int) $this->filesystem->get($this->db_path('versions/' . $bunny));
+            $bunny_number = (int) $this->filesystem->get($this->version_file($bunny));
             $changed_reports = [];
 
             // preload the metas we need
@@ -1468,13 +1462,30 @@ class Jars implements contract\Client
         return $this->head;
     }
 
+    public function version_file(string $version): string
+    {
+        $numSubParts = 2;
+        $subPartLength = 2;
+
+        $subParts = [];
+
+        for ($p = 0; $p < $numSubParts; $p++) {
+            $subParts[] = substr($version, $subPartLength * $p, $subPartLength);
+        }
+
+        $subdir = implode('/', $subParts);
+        $file_relative = "versions/$subdir/$version";
+
+        return $this->db_path($file_relative);
+    }
+
     private function version_number_of(string $version): int
     {
         if ($version === static::INITIAL_VERSION) {
             return 0;
         }
 
-        $file = $this->db_path('versions/' . $version);
+        $file = $this->version_file($version);
 
         if (null === $number = $this->filesystem->get($file)) {
             throw new Exception('Could not resolve version [' . $version . '] to a number');

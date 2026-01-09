@@ -98,6 +98,19 @@ class Record
         }
     }
 
+    public function currentContents(): ?string
+    {
+        if (!is_file($file = $this->file())) {
+            return null;
+        }
+
+        if (false === $contents = file_get_contents($file)) {
+            return null;
+        }
+
+        return $contents;
+    }
+
     public function delete()
     {
         $this->jars->filesystem()->delete($this->file());
@@ -149,7 +162,21 @@ class Record
             throw new Exception('Could not generate filename');
         }
 
-        return $this->jars->db_path('records/' . $this->table . '/' . $this->id . ($this->extension ? '.' . $this->extension : null));
+        $numSubParts = 2;
+        $subPartLength = 2;
+
+        $subParts = [];
+
+        for ($p = 0; $p < $numSubParts; $p++) {
+            $subParts[] = substr($this->id, $subPartLength * $p, $subPartLength);
+        }
+
+        $subdir = implode('/', $subParts);
+        $suffix = $this->extension ? '.' . $this->extension : null;
+
+        $file_relative = "records/$this->table/$subdir/$this->id$suffix";
+
+        return $this->jars->db_path($file_relative);
     }
 
     private function load()
