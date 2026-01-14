@@ -912,8 +912,10 @@ class Jars implements contract\Client
             // preload the metas we need
 
             $from = INF;
+            $all_reports = array_keys($this->config->reports());
+            $unaffected_reports = array_flip($all_reports);
 
-            foreach (array_keys($this->config->reports()) as $report_name) {
+            foreach ($all_reports as $report_name) {
                 $report = $this->report($report_name);
 
                 if ($report->is_fully_derived()) {
@@ -1107,12 +1109,24 @@ class Jars implements contract\Client
                 if ($report_affected) {
                     $this->filesystem->put($report->version_file(), $bunny, 200); // the greyhound has caught the bunny!
                     $this->filesystem->persist()->reset();
+
+                    unset($unaffected_reports[$report_name]);
                 }
             }
 
             $this->head = $bunny;
 
-            $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny);
+            $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny, $unaffected_reports);
+
+            // defer saving latest version of unchanged reports, as it's not likely anyone is waiting for them
+
+            if ($unaffected_reports) {
+                foreach (array_keys($unaffected_reports) as $report_name) {
+                    $this->filesystem->put($this->report($report_name)->version_file(), $bunny, 200);
+                }
+
+                $this->filesystem->persist()->reset();
+            }
         } finally {
             if ($i_lock) {
                 $this->unlock_internal(false);
@@ -1122,7 +1136,7 @@ class Jars implements contract\Client
         return $bunny;
     }
 
-    public function refresh_derived(array $changed, string $version, array &$cache = []): void
+    public function refresh_derived(array $changed, string $version, array &$unaffected_reports, array &$cache = []): void
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -1212,11 +1226,13 @@ class Jars implements contract\Client
             if ($report_affected) {
                 $this->filesystem->put($derived_report->version_file(), $version, 200); // the greyhound has caught the bunny!
                 $this->filesystem->persist()->reset();
+
+                unset($unaffected_reports[$derived_reportname]);
             }
         }
 
         if ($new_changed) {
-            $this->refresh_derived(array_keys($new_changed), $version, $cache);
+            $this->refresh_derived(array_keys($new_changed), $version, $unaffected_reports, $cache);
         }
     }
 
