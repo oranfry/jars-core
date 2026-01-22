@@ -48,18 +48,12 @@ class Link
 
     private function file()
     {
-        $numSubParts = 2;
-        $subPartLength = 2;
-
-        $subParts = [];
-
-        for ($p = 0; $p < $numSubParts; $p++) {
-            $subParts[] = substr($this->id, $subPartLength * $p, $subPartLength);
-        }
-
-        $subdir = implode('/', $subParts);
-
-        return $this->jars->db_path('links/' . $this->name . '/' . $this->direction() . '/' . $subdir . '/' . $this->id . '.json');
+        return $this->jars->dataFile(
+            $this->id,
+            'l',
+            $this->direction(),
+            $this->name,
+        );
     }
 
     private function load(): self

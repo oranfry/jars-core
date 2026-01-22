@@ -161,6 +161,44 @@ class Jars implements contract\Client
         return $this->config;
     }
 
+    private function _dataFile($prefix, string $id, ...$types): string
+    {
+        if (!preg_match('/^[a-f0-9]{64}$/', $id)) {
+            throw new Exception('Invalid ID');
+        }
+
+        $numSubParts = defined('JARS_CORE_DATAFILE_NUM_SUBPARTS') ? (int) JARS_CORE_DATAFILE_NUM_SUBPARTS : 2;
+        $subPartLength = defined('JARS_CORE_DATAFILE_SUBPART_LENGTH') ? (int) JARS_CORE_DATAFILE_SUBPART_LENGTH : 2;
+
+        if ($subPartLength * $numSubParts > 64) {
+            throw new Exception('Invalid subpart config: subdir would be too long');
+        }
+
+        if ($subPartLength < 1 || $numSubParts < 1) {
+            throw new Exception('Invalid subpart config: subdir would be too short');
+        }
+
+        $subParts = [];
+
+        for ($p = 0; $p < $numSubParts; $p++) {
+            $subParts[] = substr($id, $subPartLength * $p, $subPartLength);
+        }
+
+        $subdir = implode('/', $subParts) . '/';
+        $suffix = implode('.', array_filter($types));
+
+        if ($suffix) {
+            $suffix = '.' . $suffix;
+        }
+
+        return $this->db_path($prefix . $subdir . $id . $suffix);
+    }
+
+    public function dataFile(string $id, ...$types): string
+    {
+        return $this->_dataFile('data/', $id, ...$types);
+    }
+
     public function db_path(?string $path = null): string
     {
         return $this->db_home . ($path ? '/' . $path : null);
@@ -892,12 +930,6 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $lines_dir = $this->db_path('reports/.refreshd/lines');
-
-        if (!is_dir($lines_dir)) {
-            mkdir($lines_dir, 0777, true);
-        }
-
         if ($i_lock = !isset($this->locker_pin)) {
             $this->lock();
         }
@@ -906,7 +938,7 @@ class Jars implements contract\Client
 
         try {
             $bunny = $this->db_version();
-            $bunny_number = (int) $this->filesystem->get($this->version_file($bunny));
+            $bunny_number = $this->version_number_of($bunny);
             $changed_reports = [];
 
             // preload the metas we need
@@ -934,6 +966,10 @@ class Jars implements contract\Client
 
             if (!$length) {
                 // nothing to do
+
+                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                    error_log("Refresh: nothing to do! $from_greyhound ($from) ~ $bunny ($bunny_number) (Δ $length)");
+                }
 
                 return $bunny;
             }
@@ -1023,17 +1059,17 @@ class Jars implements contract\Client
                 $report_affected = false;
 
                 foreach ($changes as $id => $change) {
-                    foreach ($report->listen as $linetype => $listen) {
-                        if (is_numeric($linetype)) {
-                            $linetype = $listen;
+                    foreach ($report->listen as $linetype_name => $listen) {
+                        if (is_numeric($linetype_name)) {
+                            $linetype_name = $listen;
                             $listen = (object) [];
                         }
 
-                        if (preg_match('/^report:/', $linetype)) {
+                        if (preg_match('/^report:/', $linetype_name)) {
                             continue;
                         }
 
-                        if ($change->table != $this->linetype($linetype)->table) {
+                        if ($change->table != $this->linetype($linetype_name)->table) {
                             continue;
                         }
 
@@ -1043,15 +1079,15 @@ class Jars implements contract\Client
                         $past_groups = [];
 
                         if (in_array($change->sign, ['+', '~', '*'])) {
-                            if (!isset($lines_cache[$linetype])) {
-                                $lines_cache[$linetype] = [];
+                            if (!isset($lines_cache[$linetype_name])) {
+                                $lines_cache[$linetype_name] = [];
                             }
 
-                            if (!isset($lines_cache[$linetype][$id])) {
-                                $lines_cache[$linetype][$id] = $this->get($linetype, $id);
+                            if (!isset($lines_cache[$linetype_name][$id])) {
+                                $lines_cache[$linetype_name][$id] = $this->get($linetype_name, $id);
                             }
 
-                            $line = clone $lines_cache[$linetype][$id];
+                            $line = clone $lines_cache[$linetype_name][$id];
 
                             $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
 
@@ -1068,24 +1104,16 @@ class Jars implements contract\Client
                             }
                         }
 
-                        $groups_file = $lines_dir . '/' . $report_name . '/' . $linetype . '/' . $id . '.json';
-
-                        if (!is_dir($parent = dirname($groups_file))) {
-                            if (!is_dir($grandparent = dirname($groups_file, 2))) {
-                                mkdir($grandparent);
-                            }
-
-                            mkdir($parent);
-                        }
+                        $groups_file = $this->reportDataFile($report_name, $id, $linetype_name);
 
                         if (in_array($change->sign, ['-', '~', '*'])) {
-                            $past_groups = $this->filesystem->has($groups_file) ? json_decode($this->filesystem->get($groups_file))->groups : [];
+                            $past_groups = json_decode($this->filesystem->get($groups_file) ?? '[]');
                         }
 
                         // remove
 
                         foreach (array_diff($past_groups, $current_groups) as $group) {
-                            $report->delete($group, $linetype, $id);
+                            $report->delete($group, $linetype_name, $id);
                         }
 
                         // upsert
@@ -1095,7 +1123,7 @@ class Jars implements contract\Client
                         }
 
                         if ($current_groups) {
-                            $this->filesystem->put($groups_file, json_encode(['groups' => $current_groups], JSON_UNESCAPED_SLASHES));
+                            $this->filesystem->put($groups_file, json_encode($current_groups, JSON_UNESCAPED_SLASHES));
                         } elseif ($this->filesystem->has($groups_file)) {
                             $this->filesystem->delete($groups_file);
                         }
@@ -1263,6 +1291,15 @@ class Jars implements contract\Client
         }
 
         return $this->known['reports'][$name];
+    }
+
+    public function reportDataFile(string $report_name, string $id, ...$types): string
+    {
+        if (!$report_name) {
+            throw new Exception('Report name cannot be empty');
+        }
+
+        return $this->_dataFile("reports/$report_name/.data/", $id, ...$types);
     }
 
     public function reports(): array
@@ -1480,19 +1517,7 @@ class Jars implements contract\Client
 
     public function version_file(string $version): string
     {
-        $numSubParts = 2;
-        $subPartLength = 2;
-
-        $subParts = [];
-
-        for ($p = 0; $p < $numSubParts; $p++) {
-            $subParts[] = substr($version, $subPartLength * $p, $subPartLength);
-        }
-
-        $subdir = implode('/', $subParts);
-        $file_relative = "versions/$subdir/$version";
-
-        return $this->db_path($file_relative);
+        return $this->dataFile($version, 'v');
     }
 
     private function version_number_of(string $version): int

@@ -162,21 +162,12 @@ class Record
             throw new Exception('Could not generate filename');
         }
 
-        $numSubParts = 2;
-        $subPartLength = 2;
-
-        $subParts = [];
-
-        for ($p = 0; $p < $numSubParts; $p++) {
-            $subParts[] = substr($this->id, $subPartLength * $p, $subPartLength);
-        }
-
-        $subdir = implode('/', $subParts);
-        $suffix = $this->extension ? '.' . $this->extension : null;
-
-        $file_relative = "records/$this->table/$subdir/$this->id$suffix";
-
-        return $this->jars->db_path($file_relative);
+        return $this->jars->dataFile(
+            $this->id,
+            'r',
+            $this->table,
+            $this->extension,
+        );
     }
 
     private function load()
