@@ -1,11 +1,11 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
 use ReflectionFunction;
 use ReflectionUnionType;
-use jars\contract\Exception;
-use jars\contract\LineValidationException;
+use OranFry\Jars\Contract\Exception;
+use OranFry\Jars\Contract\LineValidationException;
 
 class Linetype
 {
@@ -306,7 +306,7 @@ class Linetype
         return self::$incoming_inlines[$this->jars->token()][$this->name] ?? [];
     }
 
-    public function get(?string $token, string $id, &$inlines = [])
+    public function get(?string $token, string $id)
     {
         $collected = [];
 
@@ -322,7 +322,7 @@ class Linetype
         $this->pack_r($token, $collected, $line);
         $this->only_parent_r($line);
         $this->borrow_r($token, $line);
-        $inlines = $this->strip_inline_children($line);
+        $this->strip_inline_children($line);
 
         return $line;
     }
@@ -358,7 +358,18 @@ class Linetype
         return false;
     }
 
-    public function import($token, Filesystem $original_filesystem, $timestamp, object $line, ?string $base_version, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null, bool $differential = false)
+    public function import(
+        $token,
+        $timestamp,
+        object $line,
+        Block $baseBlock,
+        Block $newBlock,
+        &$affecteds,
+        &$commits,
+        $ignorelink = null,
+        ?int $logging = null,
+        bool $differential = false,
+    )
     {
         $this->jars->trigger('importline', $this->table);
 
@@ -368,7 +379,7 @@ class Linetype
             $fields = array_merge(
                 array_keys($this->fields),
                 array_keys($this->borrow),
-                array_filter(array_map(fn ($l) => @$l->only_parent, $this->find_incoming_links()))
+                array_filter(array_map(fn ($l) => @$l->only_parent, $this->find_incoming_links())),
             );
 
             foreach ($fields as $field) {
@@ -379,22 +390,30 @@ class Linetype
         $tableinfo = $this->jars->config()->tables()[$this->table] ?? (object) [];
         $oldline = null;
         $oldrecord = null;
-        $old_inlines = [];
 
         unset($line->_given_id);
 
-        if ($was = (bool) @$line->id) {
+        if (@$line->id) {
+            if (!preg_match('/^[a-f0-9]{64}$/', $line->id)) {
+                throw new Exception('Invalid id encountered');
+            }
+
+            $was = null !== $this->jars->blockOf($line->id);
+        } else {
+            $line->id = bin2hex(random_bytes(32));
+            $was = false;
+        }
+
+        if ($was) {
             $line->_given_id = $line->id;
-            $oldrecord = Record::of($this->jars, $this->table, $line->id);
-            $oldline = $this->get($token, $line->id, $old_inlines);
+            $oldrecord = $this->jars->getRecord($this->table, $line->id);
+            $oldline = $this->get($token, $line->id);
 
             foreach (array_diff(array_keys(get_object_vars($oldline)), ['id', 'type']) as $property) {
                 if (!property_exists($line, $property)) {
                     $line->$property = $oldline->$property;
                 }
             }
-        } else {
-            $line->id = $this->jars->takeanumber();
         }
 
         $this->complete($line);
@@ -412,14 +431,20 @@ class Linetype
                 echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
-            $record = $oldrecord ? clone $oldrecord : Record::of($this->jars, $this->table);
+            if ($was) {
+                $record = clone $oldrecord;
+                $record->move($newBlock);
+            } else {
+                $record = Record::of($newBlock, $this->table, $line->id)
+                    ->init();
 
-            if (!$was) {
                 $record->created = $timestamp;
             }
 
+            $this->jars->reindexRecord($record, $newBlock);
+
             $record->modified = $timestamp;
-            $record->id = $line->id;
+            // $record->id = $line->id;
 
             $affecteds[] = (object) [
                 'id' => $record->id,
@@ -462,10 +487,9 @@ class Linetype
 
                 if (@$child->cascade_delete) {
                     $this->jars->import_r(
-                        $original_filesystem,
                         $timestamp,
                         array_map(fn ($child_id) => (object) ['type' => $child->linetype, 'id' => $child_id, '_is' => false], $link->relatives()),
-                        $base_version,
+                        $baseBlock,
                         $affecteds,
                         $commits,
                         $child->tablelink,
@@ -501,7 +525,7 @@ class Linetype
         $this->strip_inline_children($line);
 
         if ($this->is($line)) { // Add or Update
-            $this->unpack($line, $oldline, $old_inlines);
+            $this->unpack($line, $oldline);
         }
 
         // incoming links
@@ -593,10 +617,9 @@ class Linetype
                     $discard = [];
 
                     $childlines = $this->jars->import_r(
-                        $original_filesystem,
                         $timestamp,
                         [$childline],
-                        $base_version,
+                        $baseBlock,
                         $affecteds,
                         $discard,
                         $child->tablelink,
@@ -624,10 +647,9 @@ class Linetype
 
                     $child_linetype->import(
                         $token,
-                        $original_filesystem,
                         $timestamp,
                         (object) ['id' => $oldchild->id, '_is' => false],
-                        $base_version,
+                        $baseBlock,
                         $affecteds,
                         $discard,
                         $child->tablelink,
@@ -653,6 +675,8 @@ class Linetype
                 $record->{$unfuse_field} = $callback($line, $oldline);
             }
         }
+
+        // $line->version = $newBlock->version();
 
         $commit = $this->clone_r($token, $line);
         $this->scrub($token, $commit);
@@ -705,7 +729,7 @@ class Linetype
 
     protected function load_r($token, $id, &$collected, $path = '/', $ignorelink = null)
     {
-        $record = Record::of($this->jars, $this->table, $id);
+        $record = $this->jars->getRecord($this->table, $id);
         $record->assertExistence();
 
         $collected[$path] = (object) $record->toArray();
@@ -824,10 +848,10 @@ class Linetype
     }
 
     public function recurse_to_children(
-        Filesystem $original_filesystem,
         string $timestamp,
         object $line,
-        ?string $base_version,
+        Block $baseBlock,
+        Block $newBlock,
         array &$affecteds,
         array &$commits,
         ?string $ignorelink = null,
@@ -855,10 +879,9 @@ class Linetype
                 }
 
                 $childlines = $this->jars->import_r(
-                    $original_filesystem,
                     $timestamp,
                     $childlines,
-                    $base_version,
+                    $baseBlock,
                     $affecteds,
                     $childcommits,
                     null,
@@ -920,6 +943,7 @@ class Linetype
     public function save($lines): array
     {
         throw new Exception('Linetype::save() used');
+
         foreach ($lines as $line) {
             if (!@$line->type) {
                 $line->type = $this->name;
@@ -1002,7 +1026,7 @@ class Linetype
         return $this->_unlink($token, $line, $from);
     }
 
-    public function unpack($line, $oldline, $old_inlines)
+    public function unpack($line, $oldline)
     {
     }
 

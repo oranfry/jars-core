@@ -1,46 +1,57 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
-use jars\contract\BadTokenException;
-use jars\contract\BadUsernameOrPasswordException;
-use jars\contract\ConcurrentModificationException;
-use jars\contract\Config;
-use jars\contract\ConfigException;
-use jars\contract\Constants;
-use jars\contract\Exception;
+use OranFry\Jars\Contract\BadTokenException;
+use OranFry\Jars\Contract\BadUsernameOrPasswordException;
+use OranFry\Jars\Contract\ConcurrentModificationException;
+use OranFry\Jars\Contract\Config;
+use OranFry\Jars\Contract\ConfigException;
+use OranFry\Jars\Contract\Constants;
+use OranFry\Jars\Contract\Exception;
 
-class Jars implements contract\Client
+class Jars implements \OranFry\Jars\Contract\Client
 {
-    private $touch_handle = null;
-    private ?Filesystem $filesystem;
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
+
     private ?string $head = null;
-    private ?string $locker_pin = null;
     private ?string $token = null;
+    private ?string $version = null;
     private array $known = [];
     private array $listeners = [];
     private array $verified_tokens = [];
     private Config $config;
-    private string $db_home;
+    private int $pointer = 1;
+    private string $randomness;
 
-    const INITIAL_VERSION = 'd6711496d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
+    public ?Index $index = null;
+    public ?Chain $chain = null;
+    public ?Reporter $reporter = null;
 
-    public function __construct(Config $config, string $db_home)
+    const INITIAL_VERSION = '00000096d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
+
+    public function __construct(Config $config, ?string $chain_home = null, ?string $index_home = null, ?string $reports_home = null)
     {
-        $this->config = $config;
-        $this->db_home = $db_home;
-        $this->filesystem = new Filesystem();
-
-        if (!($this->config->linetypes()['token'] ?? null)) {
+        if (!($config->linetypes()['token'] ?? null)) {
             throw new Exception('Missing token linetype');
         }
-    }
 
-    public function __clone()
-    {
-        $this->filesystem = clone $this->filesystem;
+        $this->config = $config;
+
+        if ($index_home) {
+            $this->index = new Index($this, $index_home);
+        }
+
+        if ($chain_home) {
+            $this->chain = new Chain($this, $chain_home);
+        }
+
+        if ($reports_home) {
+            $this->reporter = new Reporter($this, $reports_home);
+        }
+
+        $this->randomness = random_bytes(128);
     }
 
     private static function array_keys_recursive(array $array, string $separtor = '/'): array
@@ -92,7 +103,7 @@ class Jars implements contract\Client
         return array_values($classify); // be forgiving of non-numeric or non-sequential indices
     }
 
-    private function commit(string $timestamp, array $commits, array $meta, array $saves, ?string $base_version): void
+    private function commit(Block $newBlock, string $timestamp, array $commits, array $meta): void
     {
         foreach ($commits as $id => $commit) {
             if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
@@ -100,60 +111,9 @@ class Jars implements contract\Client
             }
         }
 
-        if (!count($commits)) {
-            return;
-        }
-
-        $add_meta = array_filter($meta, fn ($change) => substr($change, 0, 1) === '+');
-        $nonadd_meta = array_filter($meta, fn ($change) => substr($change, 0, 1) !== '+');
-
-        $modified_ids = array_diff($this->meta_ids($nonadd_meta), $this->meta_ids($add_meta));
-
-        if ($modified_ids && !$base_version) {
-            throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: none");
-        }
-
-        $master_meta_file = $this->masterlog_meta_file();
-
-        $this->head = $this->db_version();
-
-        $version_number = $this->version_number_of($this->head);
-
-        // complain if this would cause concurrent modification
-
-        if ($modified_ids && $base_version !== $this->head) {
-            $from = $this->version_number_of($base_version) + 1;
-            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'` ?? ''));
-
-            $comodified_ids = array_map(
-                fn ($change) => preg_replace('/.*:/', '', $change),
-                array_filter($comparison_metas, fn ($change) => substr($change, 0, 1) !== '+'),
-            );
-
-            if (array_intersect($comodified_ids, $modified_ids)) {
-                throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: [$base_version]");
-            }
-        }
-
-        $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
-        $meta_export = implode(' ', $meta);
-
-        $this->head = hash('sha256', $this->head . $master_export);
-
-        $this->db_version($this->head);
-        $this->filesystem->put($this->version_file($this->head), $version_number + 1);
-        $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
-        $this->filesystem->append($this->masterlog_file(), $this->head . ' ' . $master_export . "\n");
-
-        foreach ($saves as $save) {
-            if (!$save->record->oldrecord) {
-                $save->record->created_version = $this->head;
-            }
-
-            $save->record->modified_version = $this->head;
-
-            $save->record->save();
-        }
+        file_put_contents($newBlock->path('timestamp'), $timestamp);
+        file_put_contents($newBlock->path('master'), json_encode(array_values($commits), JSON_UNESCAPED_SLASHES));
+        file_put_contents($newBlock->path('meta'), implode("\n", $meta));
     }
 
     public function config()
@@ -161,7 +121,7 @@ class Jars implements contract\Client
         return $this->config;
     }
 
-    private function _dataFile($prefix, string $id, ...$types): string
+    public function dataFile($base_path, string $id, ...$suffixes): string
     {
         if (!preg_match('/^[a-f0-9]{64}$/', $id)) {
             throw new Exception('Invalid ID');
@@ -184,37 +144,32 @@ class Jars implements contract\Client
             $subParts[] = substr($id, $subPartLength * $p, $subPartLength);
         }
 
-        $subdir = implode('/', $subParts) . '/';
-        $suffix = implode('.', array_filter($types));
+        $subdir = implode('/', $subParts);
+        $suffix = implode('.', array_filter($suffixes));
 
         if ($suffix) {
             $suffix = '.' . $suffix;
         }
 
-        return $this->db_path($prefix . $subdir . $id . $suffix);
-    }
-
-    public function dataFile(string $id, ...$types): string
-    {
-        return $this->_dataFile('data/', $id, ...$types);
+        return $base_path . '/' . $subdir . '/' . $id . $suffix;
     }
 
     public function db_path(?string $path = null): string
     {
-        return $this->db_home . ($path ? '/' . $path : null);
-    }
+        echo "db_path called\n";
 
-    private function db_version(?string $new = null): string|self
-    {
-        $db_version_file = $this->db_path('version.dat');
-
-        if (func_num_args()) {
-            $this->filesystem->put($db_version_file, $new, 200);
-
-            return $this;
+        foreach (debug_backtrace() as $item) {
+            echo @$item['file'] . ':' . @$item['line'] . "\n";
         }
 
-        return $this->filesystem->get($db_version_file) ?? static::INITIAL_VERSION;
+        die("\n\n");
+    }
+
+    private function db_version(): string
+    {
+        $file = $this->db_path('current/version.dat');
+
+        return is_file($file) ? file_get_contents($file) : static::INITIAL_VERSION;
     }
 
     public static function debug_push(string $activity): void
@@ -274,29 +229,30 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->db_version();
+        // $this->head = $this->db_version();
 
         return $this->linetype($linetype_name)->delete($id);
     }
 
-    private function dredge_r(array $lines): array
+    private function dredge_r(array $lines, string $version): array
     {
         $dredged = [];
 
         foreach ($lines as $line) {
-            if (@$line->_is !== false) {
-                $_line = $this->linetype($line->type)->get($this->token, $line->id);
-            } else {
-                $_line = (object) [
+            $_line = match ($line->_is ?? true) {
+                false => (object) [
                     '_is' => false,
                     'id' => $line->id,
                     'type' => $line->type,
-                ];
-            }
+                ],
+                default => $this->linetype($line->type)->get($this->token, $line->id),
+            };
+
+            $_line->version = $version;
 
             foreach (array_keys(get_object_vars($line)) as $key) {
                 if (is_array($line->$key)) {
-                    $_line->$key = $this->dredge_r($line->$key);
+                    $_line->$key = $this->dredge_r($line->$key, $version);
                 }
             }
 
@@ -317,6 +273,7 @@ class Jars implements contract\Client
 
     public function filesystem(?Filesystem $filesystem = null): null|Filesystem|self
     {
+        throw new Exception('filesystem used');
         if (func_num_args()) {
             $this->filesystem = $filesystem;
 
@@ -372,13 +329,17 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->db_version();
+        // $this->head = $this->index->head();
 
-        $line = $this->linetype($linetype_name)->get($this->token, $id);
+        $line = $this
+            ->linetype($linetype_name)
+            ->get($this->token, $id);
 
         if (!$line) {
             return null;
         }
+
+        $line->version = $this->index->head();
 
         return $line;
     }
@@ -398,10 +359,13 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $report = $this->report($report_name);
-        $group = $report->get($group, $min_version === true ? $this->head : ($min_version ?: null));
+        $manager = $this->reporter->getManager($report_name);
 
-        $this->head = $report->version();
+        $group = $manager->get(
+            new Filesystem(),
+            $group,
+            $min_version === true ? $this->head : ($min_version ?: null),
+        );
 
         return $group;
     }
@@ -412,10 +376,8 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $report = $this->report($report_name);
-        $groups = $report->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
-
-        $this->head = $report->version();
+        $manager = $this->reporter->getManager($report_name);
+        $groups = $manager->groups(new Filesystem(), $prefix, $min_version === true ? $this->head : ($min_version ?: null));
 
         return $groups;
     }
@@ -437,39 +399,46 @@ class Jars implements contract\Client
         return null;
     }
 
-    public function import(string $timestamp, array $lines, ?string $base_version = null, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
+    public function import(
+        string $timestamp,
+        array $lines,
+        ?string $baseVersion = null,
+        bool $dryrun = false,
+        ?int $logging = null,
+        bool $differential = false,
+    ): array
     {
-        $base_version ??= $this->head;
+        $baseBlock = $this
+            ->chain
+            ->getBlock($baseVersion ?? static::INITIAL_VERSION);
 
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        if ($i_lock = !$dryrun && !isset($this->locker_pin)) {
-            $this->lock();
-        }
-
-        // we have the floor!
-
-        try {
-            return $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
-        } finally {
-            if ($i_lock) {
-                $this->unlock_internal();
-            }
-        }
-    }
-
-    private function _import(string $timestamp, array $lines, ?string $base_version, bool $dryrun, ?int $logging, bool $differential): array
-    {
         $affecteds = [];
         $commits = [];
-        $original_filesystem = clone $this->filesystem;
-        $original_filesystem->freeze();
+
+        $newBlock = $this
+            ->chain
+            ->createBlock($baseBlock)
+            ->save();
 
         static::debug_push('Jars::import_r');
-        $lines = $this->import_r($original_filesystem, $timestamp, $lines, $base_version, $affecteds, $commits, null, $logging, $differential);
+
+        $lines = $this->import_r(
+            $timestamp,
+            $lines,
+            $baseBlock,
+            $newBlock,
+            $affecteds,
+            $commits,
+            null,
+            $logging,
+            $differential,
+        );
+
         static::debug_pop();
+
+        if (!count($commits = array_filter($commits))) {
+            return [];
+        }
 
         static::debug_push('Process affecteds');
         foreach ($affecteds as $affected) {
@@ -519,19 +488,41 @@ class Jars implements contract\Client
         static::debug_pop();
 
         static::debug_push('Dredge');
-        $updated = $this->dredge_r($lines);
+        $updated = $this->dredge_r($lines, $newBlock->version());
         static::debug_pop();
 
-        static::debug_push('Commit activities');
-        if ($dryrun) {
-            $this->filesystem->reset();
-        } else {
-            $commits = array_filter($commits);
-            $saves = array_filter($affecteds, fn ($affected) => $affected->action === 'save');
+        static::debug_push('Commit');
+        $this->commit($newBlock, $timestamp, $commits, $meta);
+        static::debug_pop();
 
-            $this->commit($timestamp, $commits, $meta, $saves, $base_version);
+        if (!$dryrun) {
+            static::debug_push('Add to chain');
+
+            if (Jars::INITIAL_VERSION === $baseBlock->version()) {
+                $baseBlock->mkdir();
+            }
+
+            static::debug_push('Link to previous block');
+
+            $baseBlock
+                ->lock()
+                ->setNext($newBlock->version())
+                ->unlock();
+
+            static::debug_pop();
+
+            static::debug_push('Update index');
+
+            $this
+                ->index
+                ->safeLock(10)
+                ->addToChain($newBlock)
+                ->unlock();
+
+            static::debug_pop();
+
+            static::debug_pop();
         }
-        static::debug_pop();
 
         static::debug_push('Trigger entryimported');
         $this->trigger('entryimported');
@@ -540,7 +531,17 @@ class Jars implements contract\Client
         return $updated;
     }
 
-    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, ?string $base_version, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
+    public function import_r(
+        string $timestamp,
+        array $lines,
+        Block $baseBlock,
+        Block $newBlock,
+        array &$affecteds,
+        array &$commits,
+        ?string $ignorelink = null,
+        ?int $logging = null,
+        bool $differential = false,
+    ): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -559,13 +560,36 @@ class Jars implements contract\Client
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->import($this->token, $original_filesystem, $timestamp, $line, $base_version, $affecteds, $commits, $ignorelink, $logging, $differential);
+                ->import(
+                    $this->token,
+                    $timestamp,
+                    $line,
+                    $baseBlock,
+                    $newBlock,
+                    $affecteds,
+                    $commits,
+                    $ignorelink,
+                    $logging,
+                    $differential,
+                );
         }
 
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->recurse_to_children($original_filesystem, $timestamp, $line, $base_version, $affecteds, $commits, $ignorelink, $logging, $differential);
+                ->recurse_to_children(
+                    $timestamp,
+                    $line,
+                    $baseBlock,
+                    $newBlock,
+                    $affecteds,
+                    $commits,
+                    $ignorelink,
+                    $logging,
+                    $differential,
+                );
+
+            $line->version = $newBlock->version();
         }
 
         return $lines;
@@ -716,31 +740,6 @@ class Jars implements contract\Client
         }
     }
 
-    public function lock(): false|string
-    {
-        if ($this->touch_handle) {
-            throw new Exception('Attempt to lock when already locked');
-        }
-
-        @mkdir($this->db_home, 0777, true);
-
-        // TODO: Implement timeout using non-blocking locking in a loop until
-
-        if (!($this->touch_handle = fopen($this->touch_file(), 'a'))) {
-            throw new Exception('Could not open the touch file');
-        }
-
-        if (!flock($this->touch_handle, LOCK_EX)) {
-            fclose($this->touch_handle);
-
-            $this->touch_handle = null;
-
-            throw new Exception('Could not acquire a lock over the touch file');
-        }
-
-        return $this->locker_pin = bin2hex(random_bytes(32));
-    }
-
     public function login(?string $username = null, ?string $password = null, bool $one_time = false): ?string
     {
         $start = microtime(true) * 1e6;
@@ -842,9 +841,9 @@ class Jars implements contract\Client
         return hash('sha256', hex2bin(hash('sha256', $n . '--' . $sequence->secret())));
     }
 
-    public static function of(Config $config, string $db_home): self
+    public static function of(Config $config, ?string $chain_home = null, ?string $index_home = null, ?string $reports_home = null): self
     {
-        return new Jars($config, $db_home);
+        return new Jars($config, $chain_home, $index_home, $reports_home);
     }
 
     public function persist(): self
@@ -917,11 +916,29 @@ class Jars implements contract\Client
         $contents = Record::of($this, $table_name, $id)
             ->currentContents();
 
-        if ($contents !== null) {
-            $this->head = $this->db_version();
-        }
+        // if ($contents !== null) {
+        //     $this->head = $this->db_version();
+        // }
 
         return $contents;
+    }
+
+    public function blockOf(string $recordId): ?Block
+    {
+        $version = $this->index->recordVersion($recordId);
+
+        if ($version === null) {
+            return null;
+        }
+
+        return $this->chain->getBlock($version);
+    }
+
+    public function getRecord(string $table, string $id): Record
+    {
+        return $this
+            ->blockOf($id)
+            ->getRecord($table, $id);
     }
 
     public function refresh(): string
@@ -930,235 +947,246 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        if ($i_lock = !isset($this->locker_pin)) {
-            $this->lock();
-        }
+        // we need the index to remain the same while we work
 
-        // we have the floor!
+        // TODO: resolve this major bottleneck!
+        // save() and refresh() both locking index, need to reduce contention
 
-        try {
-            $bunny = $this->db_version();
-            $bunny_number = $this->version_number_of($bunny);
-            $changed_reports = [];
+        $this->index->safeLock(60);
 
-            // preload the metas we need
+        $indexHead = $this->index->head();
 
-            $from = INF;
-            $all_reports = array_keys($this->config->reports());
-            $unaffected_reports = array_flip($all_reports);
+        $locked = [];
+        $bunny = $this->index->head();
+        $changed_reports = [];
+        $unaffected_reports = array_flip(array_keys($this->config->reports()));
 
-            foreach ($all_reports as $report_name) {
-                $report = $this->report($report_name);
+        foreach (array_keys($this->config->reports()) as $report_name) {
+            $filesystem = new Filesystem();
 
-                if ($report->is_fully_derived()) {
-                    continue;
-                }
+            $report = $this->report($report_name);
 
-                $greyhound = $report->version($greyhound_number) ?? static::INITIAL_VERSION;;
-
-                if ($greyhound_number < $from) {
-                    $from = $greyhound_number;
-                    $from_greyhound = $greyhound;
-                }
+            if ($report->is_fully_derived()) {
+                continue;
             }
 
-            $length = $bunny_number - $from;
+            $manager = $this
+                ->reporter
+                ->getManager($report_name)
+                ->mkdir();
 
-            if (!$length) {
-                // nothing to do
+            if (!@$locked[$report_name]) {
+                $manager->lock();
+                $locked[$report_name] = $manager->unlock(...);
+            }
 
-                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                    error_log("Refresh: nothing to do! $from_greyhound ($from) ~ $bunny ($bunny_number) (Δ $length)");
-                }
+            $greyhound = $manager->version();
 
-                return $bunny;
+            if ($bunny === $greyhound) {
+                continue;
             }
 
             if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                error_log("Refreshing $from_greyhound ($from) ~ $bunny ($bunny_number) (Δ $length)...");
+                error_log("Refreshing report $report_name [$greyhound → $bunny]");
             }
 
-            $master_meta_file = $this->db_path('master.dat.meta');
-            $command = "cat '$master_meta_file' | tail -n +" . ($from + 1) . " | head -n $length | cut -c66-";
-            $process = proc_open($command, [1 => ['pipe', 'w']], $pipes);
+            // work out the changes
 
-            if (!is_resource($process)) {
-                throw new Exception('Problem reading master log meta file');
-            }
+            $changes = [];
+            $relatives = [];
+            $metas = [];
+            $stop = false;
 
-            $metas = array_map(fn () => explode(' ', rtrim(fgets($pipes[1]), "\n")), array_fill($from, $length, null));
+            for (
+                $block = $this->chain->getBlock($greyhound)->advance();
+                $block !== null && !$stop;
+                $block = $block->advance()
+            ) {
+                $version = $block->version();
 
-            fclose($pipes[1]);
-            proc_close($process);
+                if ($indexHead === $version) {
+                    $stop = true; // don't allow the loop to go beyond the indexed chain
+                }
 
-            foreach (array_keys($this->config->reports()) as $report_name) {
-                $report = $this->report($report_name);
-
-                if ($report->is_fully_derived()) {
+                if (self::INITIAL_VERSION === $version = $block->version()) {
+                    // intial version does not contain changes; its just a link to first real block
                     continue;
                 }
 
-                $greyhound = $report->version($greyhound_number);
+                $metas[$version] ??= explode("\n", file_get_contents($block->path('meta')));
 
-                if ($greyhound && $bunny == $greyhound) {
-                    continue;
-                }
+                foreach ($metas[$version] as $meta) {
+                    // connection
 
-                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                    error_log("Refreshing report $report_name [$greyhound_number → $bunny_number]");
-                }
-
-                $changes = [];
-                $relatives = [];
-
-                for ($version_number = $greyhound_number; $version_number <= $bunny_number - 1; $version_number++) {
-                    foreach ($metas[$version_number] as $meta) {
-                        // connection
-
-                        if (preg_match('/^>/', $meta)) {
-                            continue;
-                        }
-
-                        // disconnection - keep track of linked record ids
-
-                        if (preg_match('/^<([^:,]+):([^:,]+),([^:,]+)$/', $meta, $matches)) {
-                            [, $tablelink, $left, $right] = $matches;
-
-                            $relatives[$tablelink]['forth'][$left][] = $right;
-                            $relatives[$tablelink]['back'][$right][] = $left;
-                            continue;
-                        }
-
-                        if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
-                            throw new Exception('Invalid meta line: ' . $meta);
-                        }
-
-                        [, $sign, $table, $id] = $matches;
-
-                        if (!isset($changes[$id])) {
-                            $changes[$id] = (object) [
-                                'table' => $table,
-                            ];
-                        }
-
-                        $changes[$id]->sign = $sign;
+                    if (preg_match('/^>/', $meta)) {
+                        continue;
                     }
-                }
 
-                $lines_cache = [];
-                $childsets = [];
+                    // disconnection - keep track of linked record ids
 
-                // propagate
+                    if (preg_match('/^<([^:,]+):([^:,]+),([^:,]+)$/', $meta, $matches)) {
+                        [, $tablelink, $left, $right] = $matches;
 
-                if ($greyhound) {
-                    foreach ($changes as $id => $change) {
-                        $this->propagate_r($change->table, $id, $relatives, $changes);
+                        $relatives[$tablelink]['forth'][$left][] = $right;
+                        $relatives[$tablelink]['back'][$right][] = $left;
+                        continue;
                     }
+
+                    if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
+                        throw new Exception('Invalid meta line: ' . $meta);
+                    }
+
+                    [, $sign, $table, $id] = $matches;
+
+                    if (!isset($changes[$id])) {
+                        $changes[$id] = (object) [
+                            'table' => $table,
+                        ];
+                    }
+
+                    $changes[$id]->sign = $sign;
                 }
+            }
 
-                $report_affected = false;
+            $lines_cache = [];
+            $childsets = [];
 
+            // propagate
+
+            if ($greyhound) {
                 foreach ($changes as $id => $change) {
-                    foreach ($report->listen as $linetype_name => $listen) {
-                        if (is_numeric($linetype_name)) {
-                            $linetype_name = $listen;
-                            $listen = (object) [];
+                    $this->propagate_r($change->table, $id, $relatives, $changes);
+                }
+            }
+
+            // apply the changes
+
+            $report_affected = false;
+
+            foreach ($changes as $id => $change) {
+                foreach ($report->listen as $linetype_name => $listen) {
+                    if (is_numeric($linetype_name)) {
+                        $linetype_name = $listen;
+                        $listen = (object) [];
+                    }
+
+                    if (preg_match('/^report:/', $linetype_name)) {
+                        continue;
+                    }
+
+
+                    if ($change->table != $this->linetype($linetype_name)->table) {
+                        continue;
+                    }
+
+                    $report_affected = true;
+                    $current_groups = [];
+                    $past_groups = [];
+
+                    if (in_array($change->sign, ['+', '~', '*'])) {
+                        if (!isset($lines_cache[$linetype_name])) {
+                            $lines_cache[$linetype_name] = [];
                         }
 
-                        if (preg_match('/^report:/', $linetype_name)) {
-                            continue;
+                        if (!isset($lines_cache[$linetype_name][$id])) {
+                            $lines_cache[$linetype_name][$id] = $this->get($linetype_name, $id);
                         }
 
-                        if ($change->table != $this->linetype($linetype_name)->table) {
-                            continue;
-                        }
+                        $line = clone $lines_cache[$linetype_name][$id];
 
-                        $report_affected = true;
+                        $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
 
-                        $current_groups = [];
-                        $past_groups = [];
-
-                        if (in_array($change->sign, ['+', '~', '*'])) {
-                            if (!isset($lines_cache[$linetype_name])) {
-                                $lines_cache[$linetype_name] = [];
+                        try {
+                            if (property_exists($listen, 'classify') && $listen->classify) {
+                                $current_groups = static::classifier_value($listen->classify, $line);
+                            } elseif (property_exists($report, 'classify') && $report->classify) {
+                                $current_groups = static::classifier_value($report->classify, $line);
+                            } else {
+                                $current_groups = [''];
                             }
-
-                            if (!isset($lines_cache[$linetype_name][$id])) {
-                                $lines_cache[$linetype_name][$id] = $this->get($linetype_name, $id);
-                            }
-
-                            $line = clone $lines_cache[$linetype_name][$id];
-
-                            $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
-
-                            try {
-                                if (property_exists($listen, 'classify') && $listen->classify) {
-                                    $current_groups = static::classifier_value($listen->classify, $line);
-                                } elseif (property_exists($report, 'classify') && $report->classify) {
-                                    $current_groups = static::classifier_value($report->classify, $line);
-                                } else {
-                                    $current_groups = [''];
-                                }
-                            } catch (Exception $e) {
-                                throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
-                            }
-                        }
-
-                        $groups_file = $this->reportDataFile($report_name, $id, $linetype_name);
-
-                        if (in_array($change->sign, ['-', '~', '*'])) {
-                            $past_groups = json_decode($this->filesystem->get($groups_file) ?? '[]');
-                        }
-
-                        // remove
-
-                        foreach (array_diff($past_groups, $current_groups) as $group) {
-                            $report->delete($group, $linetype_name, $id);
-                        }
-
-                        // upsert
-
-                        foreach ($current_groups as $group) {
-                            $report->upsert($group, $line, @$report->sorter);
-                        }
-
-                        if ($current_groups) {
-                            $this->filesystem->put($groups_file, json_encode($current_groups, JSON_UNESCAPED_SLASHES));
-                        } elseif ($this->filesystem->has($groups_file)) {
-                            $this->filesystem->delete($groups_file);
-                        }
-
-                        foreach (array_merge($past_groups, $current_groups) as $group) {
-                            $changed_reports[$report_name][$group] = true;
+                        } catch (Exception $e) {
+                            throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
                         }
                     }
-                }
 
-                if ($report_affected) {
-                    $this->filesystem->put($report->version_file(), $bunny, 200); // the greyhound has caught the bunny!
-                    $this->filesystem->persist()->reset();
+                    $groups_file = $manager->dataFile($id, $linetype_name, 'groups');
 
-                    unset($unaffected_reports[$report_name]);
+                    if (in_array($change->sign, ['-', '~', '*'])) {
+                        $past_groups = json_decode($filesystem->get($groups_file) ?? '[]');
+                    }
+
+                    // remove
+
+                    foreach (array_diff($past_groups, $current_groups) as $group) {
+                        $manager->delete($group, $linetype_name, $id, $filesystem);
+                    }
+
+                    // upsert
+
+                    foreach ($current_groups as $group) {
+                        $manager->upsert($group, $line, $filesystem, @$report->sorter);
+                    }
+
+                    if ($current_groups) {
+                        $filesystem->put($groups_file, json_encode($current_groups, JSON_UNESCAPED_SLASHES));
+                    } elseif ($filesystem->has($groups_file)) {
+                        $filesystem->delete($groups_file);
+                    }
+
+                    foreach (array_merge($past_groups, $current_groups) as $group) {
+                        $changed_reports[$report_name][$group] = true;
+                    }
                 }
             }
 
-            $this->head = $bunny;
+            if ($report_affected) {
+                $filesystem->put($manager->path('._version'), $bunny, 200);
+                $filesystem->persist();
 
-            $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny, $unaffected_reports);
+                unset($unaffected_reports[$report_name]);
+            }
 
-            // defer saving latest version of unchanged reports, as it's not likely anyone is waiting for them
+            unset($filesystem);
+        }
 
-            if ($unaffected_reports) {
-                foreach (array_keys($unaffected_reports) as $report_name) {
-                    $this->filesystem->put($this->report($report_name)->version_file(), $bunny, 200);
+        // $this->head = $bunny;
+
+        // TODO: restore derived
+
+        $this->refresh_derived(
+            static::array_keys_recursive($changed_reports),
+            $bunny,
+            $unaffected_reports,
+        );
+
+        // defer saving latest version of unchanged reports, as it's not likely anyone is waiting for them
+
+        if ($unaffected_reports) {
+            $filesystem = new Filesystem();
+
+            foreach (array_keys($unaffected_reports) as $report_name) {
+                $manager = $this
+                    ->reporter
+                    ->getManager($report_name)
+                    ->mkdir();
+
+                if (!@$locked[$report_name]) {
+                    $manager->lock();
+                    $locked[$report_name] = $manager->unlock(...);
                 }
 
-                $this->filesystem->persist()->reset();
+                $filesystem->put($manager->path('._version'), $bunny, 200);
             }
-        } finally {
-            if ($i_lock) {
-                $this->unlock_internal(false);
-            }
+
+            $filesystem->persist();
+
+            unset($filesystem);
+        }
+
+        $this->index->unlock();
+
+        foreach ($locked as $unlock) {
+            $unlock();
         }
 
         return $bunny;
@@ -1174,6 +1202,13 @@ class Jars implements contract\Client
 
         foreach (array_keys($this->config->reports()) as $derived_reportname) {
             $derived_report = $this->report($derived_reportname);
+
+            if (!$derived_report->is_derived()) {
+                continue;
+            }
+
+            $filesystem = new Filesystem();
+            $manager = $this->reporter->getManager($derived_reportname);
 
             $report_affected = false;
 
@@ -1211,7 +1246,7 @@ class Jars implements contract\Client
                     }
 
                     foreach ($derived_groupnames as $derived_groupname) {
-                        $cache[$change_reportname][$change_groupname] ??= $this->group($change_reportname, $change_groupname, $version);
+                        $cache[$change_reportname][$change_groupname] ??= $this->group($change_reportname, $change_groupname); // TODO: this used to specify $version as third argument, is this necessary? does/could it affect anything?
                         $cache[$derived_reportname][$derived_groupname] ??= $this->group($derived_reportname, $derived_groupname);
 
                         if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
@@ -1228,10 +1263,10 @@ class Jars implements contract\Client
 
                         $new_changed[$derived_reportname . '/' . $derived_groupname] = true;
 
-                        $group_file = $this->db_path("reports/$derived_reportname/$derived_groupname.json");
+                        $group_file = $manager->path(($derived_groupname ?: '_empty') . '.json');
 
                         if ($exists = $cache[$derived_reportname][$derived_groupname] !== null) {
-                            $this->filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname], JSON_UNESCAPED_SLASHES));
+                            $filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname], JSON_UNESCAPED_SLASHES));
 
                             if (!in_array($derived_groupname, $groups)) {
                                 $groups[] = $derived_groupname;
@@ -1239,24 +1274,26 @@ class Jars implements contract\Client
                                 sort($groups);
                             }
                         } else {
-                            $this->filesystem->delete($group_file);
+                            $filesystem->delete($group_file);
 
                             if (in_array($derived_groupname, $groups)) {
                                 $groups = array_values(array_diff($groups, [$derived_groupname]));
                             }
                         }
 
-                        $derived_report->maintain_groups($derived_groupname, $exists);
+                        $manager->maintain_groups($derived_groupname, $exists, $filesystem);
                     }
                 }
             }
 
             if ($report_affected) {
-                $this->filesystem->put($derived_report->version_file(), $version, 200); // the greyhound has caught the bunny!
-                $this->filesystem->persist()->reset();
+                $filesystem->put($manager->path('._version'), $version, 200); // the greyhound has caught the bunny!
+                $filesystem->persist()->reset();
 
                 unset($unaffected_reports[$derived_reportname]);
             }
+
+            unset($filesystem);
         }
 
         if ($new_changed) {
@@ -1281,7 +1318,6 @@ class Jars implements contract\Client
             $report->name = $name;
 
             $report->jars($this);
-            $report->filesystem($this->filesystem());
 
             if (method_exists($report, 'init')) {
                 $report->init();
@@ -1354,22 +1390,14 @@ class Jars implements contract\Client
 
         static::debug_pop();
 
+        // $this->head = $this->index->head();
+
         return $result;
     }
 
     public function takeanumber(): string
     {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        $pointer_file = $this->db_home . '/pointer.dat';
-        $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
-
-        $this->trigger('takeanumber', $pointer, $id);
-        $this->filesystem->put($pointer_file, $pointer + 1);
-
-        return $id;
+        return hash('sha256', $this->randomness . '--' . $this->pointer++);
     }
 
     public function token(?string $token = null): self|string|null
@@ -1389,7 +1417,7 @@ class Jars implements contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->db_version();
+        // $this->head = $this->db_version();
 
         return (object) [
             'timestamp' => time(),
@@ -1407,7 +1435,7 @@ class Jars implements contract\Client
             throw new Exception('Invalid event name');
         }
 
-        $eventinterface = 'jars\\events\\' . $event;
+        $eventinterface = 'OranFry\\Jars\\Core\\Events\\' . $event;
 
         if (!interface_exists($eventinterface)) {
             throw new Exception('No such event [' . $event . ']');
@@ -1420,34 +1448,6 @@ class Jars implements contract\Client
                 $listener->$method(...$arguments);
             }
         }
-    }
-
-    public function unlock(string $locker_pin, bool $do_touch = true): void
-    {
-        if (!$this->touch_handle) {
-            throw new Exception('Attempt to unlock when not locked');
-        }
-
-        if ($this->locker_pin !== $locker_pin) {
-            throw new Exception('Incorrect locker PIN provided for unlocking');
-        }
-
-        $this->filesystem->persist()->reset();
-
-        if ($do_touch) {
-            ftruncate($this->touch_handle, 0);
-            fwrite($this->touch_handle, microtime(true));
-        }
-
-        fclose($this->touch_handle);
-
-        $this->touch_handle = null;
-        $this->locker_pin = null;
-    }
-
-    private function unlock_internal(bool $touch = true): void
-    {
-        $this->unlock($this->locker_pin, $touch);
     }
 
     public static function validate_password(string $password): bool
@@ -1506,20 +1506,6 @@ class Jars implements contract\Client
         ];
     }
 
-    public function version(): ?string
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        return $this->head;
-    }
-
-    public function version_file(string $version): string
-    {
-        return $this->dataFile($version, 'v');
-    }
-
     private function version_number_of(string $version): int
     {
         if ($version === static::INITIAL_VERSION) {
@@ -1535,8 +1521,63 @@ class Jars implements contract\Client
         return intval($number);
     }
 
+    public function versionDir(string $version): string
+    {
+        return $this->_dataFile('versions/', $version);
+    }
+
+    public function versionedFile(...$pieces): string
+    {
+        if (!$pieces) {
+            throw new Exception('Versioned files must have a name, no pieces given');
+        }
+
+        return $this->versionDir() . '/' . implode('/', $pieces);
+    }
+
     private static function writable(string $file): bool
     {
         return touch($file) && is_writable($file);
+    }
+
+    public function reindexRecord(Record $record, Block $block): self
+    {
+        $this->index->recordVersion($record->id, $block->version());
+
+        return $this;
+    }
+
+    public function head(): string
+    {
+        return $this->index->head();
+    }
+
+    public function rebuildIndex(): self
+    {
+        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+            error_log('Rebuilding index');
+        }
+
+        $this
+            ->index
+            ->nuke()
+            ->extendLock(600);
+
+        for (
+            $block = new Block($this->chain, self::INITIAL_VERSION);
+            $block !== null;
+            $block = $block->advance()
+        ) {
+            $this->index->addToChain($block);
+        }
+
+        return $this;
+    }
+
+    public function unlockIndex(): self
+    {
+        $this->index->unlock();
+
+        return $this;
     }
 }

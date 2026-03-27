@@ -1,8 +1,8 @@
 <?php
 
-namespace jars\events;
+namespace OranFry\Jars\Core\Events;
 
-interface takeanumber extends \jars\Listener
+interface takeanumber extends \OranFry\Jars\Core\Listener
 {
     public function handle_takeanumber(int $pointer, string $id);
 }

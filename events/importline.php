@@ -1,8 +1,8 @@
 <?php
 
-namespace jars\events;
+namespace OranFry\Jars\Core\Events;
 
-interface importline extends \jars\Listener
+interface importline extends \OranFry\Jars\Core\Listener
 {
     public function handle_importline(string $table);
 }

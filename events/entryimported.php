@@ -1,8 +1,8 @@
 <?php
 
-namespace jars\events;
+namespace OranFry\Jars\Core\Events;
 
-interface entryimported extends \jars\Listener
+interface entryimported extends \OranFry\Jars\Core\Listener
 {
     public function handle_entryimported();
 }

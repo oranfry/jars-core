@@ -1,6 +1,6 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
 class Link
 {
@@ -10,6 +10,7 @@ class Link
     private $jars;
     private $name;
     private $reverse;
+    private ?string $version = null;
 
     public function __construct(Jars $jars, string $name, string $id, ?bool $reverse = null)
     {
@@ -22,6 +23,11 @@ class Link
     public function direction()
     {
         return $this->reverse ? 'back' : 'forth';
+    }
+
+    public function find(): self
+    {
+        $this->version = $this->jars->linkVersion($this->id);
     }
 
     public function firstChild()

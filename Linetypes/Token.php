@@ -1,8 +1,8 @@
 <?php
 
-namespace jars\linetype;
+namespace OranFry\Jars\Core\Linetypes;
 
-class token extends \jars\Linetype
+class Token extends \OranFry\Jars\Core\Linetype
 {
     function __construct()
     {
