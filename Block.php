@@ -126,12 +126,14 @@ class Block
         $this->next();
         $this->height();
 
-        $handle = opendir($this->path());
+        if ($this->version !== Jars::INITIAL_VERSION) {
+            $handle = opendir($this->path());
 
-        while ($file = readdir($handle)) {
-            if (preg_match('/^r\.([a-z_]+)\.([0-9a-f]{64})$/', $file, $matches)) {
-                [, $table, $id] = $matches;
-                $this->records[$table . '.' . $id] = new Record($this, $table, $id);
+            while ($file = readdir($handle)) {
+                if (preg_match('/^r\.([a-z_]+)\.([0-9a-f]{64})$/', $file, $matches)) {
+                    [, $table, $id] = $matches;
+                    $this->records[$table . '.' . $id] = new Record($this, $table, $id);
+                }
             }
         }
 
