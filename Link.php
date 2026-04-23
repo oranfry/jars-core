@@ -2,7 +2,7 @@
 
 namespace OranFry\Jars\Core;
 
-class Link
+class xLink
 {
     private $data = null;
     private $dirty = false;

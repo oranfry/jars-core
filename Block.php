@@ -11,12 +11,16 @@ class Block
     private Chain $chain;
 
     private string $version; // id of the block; like a commit hash
-    private ?string $previous;
+    private ?string $previous = null;
     private ?string $next = null;
     private ?int $height = null;
-    private $lock;
-
+    private int $pointer = 1;
+    private ?string $timestamp = null;
+    private ?array $meta = null;
     private array $records = [];
+    private bool $loaded = false;
+
+    private array $links = [];
 
     public function __construct(Chain $chain, string $version)
     {
@@ -39,28 +43,49 @@ class Block
             return true; // empty base block with implicit existence
         }
 
-        return is_dir($this->path());
+        return is_file($this->path());
     }
 
-    public function path(?string $extra = null): string
+    public function path(): string
     {
-        $folder = $this->chain->dataFile($this->version);
-
-        if ($extra !== null) {
-            return $folder . '/' . $extra;
-        }
-
-        return $folder;
+        return $this->chain->dataFile($this->version);
     }
 
-    public function getRecord(string $table, string $id): Record
+    public function getRecord(string $table, string $id): object
     {
-        return $this->records[$id . '.' . $table] ??= new Record($this, $table, $id);
+        return $this->records[$id . '.' . $table];
     }
 
-    public function setRecord(string $table, string $id, Record $record): self
+    public function setRecord(string $table, string $id, object $record): self
     {
         $this->records[$id . '.' . $table] = $record;
+
+        return $this;
+    }
+    private function linkKey(string $linkName, string $recordId, ?bool $reverse): string
+    {
+        return $recordId . '.' . $linkName . '.' . ($reverse ? 'back' : 'forth');
+    }
+
+    public function getLink(string $linkName, string $recordId, ?bool $reverse): array
+    {
+        return $this->links[$this->linkKey($linkName, $recordId, $reverse)];
+    }
+
+    public function addLink(string $linkName, string $recordId, ?bool $reverse, string $relative): self
+    {
+        $key = $this->linkKey($linkName, $recordId, $reverse);
+
+        $this->links[$key] = array_values(array_unique(array_merge($this->links[$key] ?? [], [$relative])));
+
+        return $this;
+    }
+
+    public function removeLink(string $linkName, string $recordId, ?bool $reverse, string $relative): self
+    {
+        $key = $this->linkKey($linkName, $recordId, $reverse);
+
+        $this->links[$key] = array_values(array_filter($this->links[$key] ?? [], fn ($value) => $value !== $relative));
 
         return $this;
     }
@@ -70,8 +95,23 @@ class Block
         return array_map(fn ($record) => $record->id, $this->records);
     }
 
-    public function version(): string
+    public function linkKeys(): array
     {
+        return array_keys($this->links);
+    }
+
+    public function version(?string $new = null): self|string
+    {
+        if (func_num_args()) {
+            if (!preg_match('/^[a-f0-9]{64}$/', $new)) {
+                throw new Exception('Invalid id encountered');
+            }
+
+            $this->version = $new;
+
+            return $this;
+        }
+
         return $this->version;
     }
 
@@ -91,24 +131,12 @@ class Block
             return null;
         }
 
-        if ($this->previous !== null) {
-            return $this->previous;
-        }
-
-        return $this->previous = file_get_contents($this->path('previous'));
+        return $this->previous;
     }
 
     public function next(): ?string
     {
-        if ($this->next !== null) {
-            return $this->next;
-        }
-
-        if (is_file($file = $this->path('next'))) {
-            return file_get_contents($file);
-        }
-
-        return null;
+        return $this->next;
     }
 
     public function setNext(string $next): self
@@ -120,21 +148,38 @@ class Block
 
     public function load(): self
     {
-        $this->previous = $this->next = $this->height = null;
+        if (!$this->loaded) {
+            $this->assertExistence();
 
-        $this->previous();
-        $this->next();
-        $this->height();
-
-        if ($this->version !== Jars::INITIAL_VERSION) {
-            $handle = opendir($this->path());
-
-            while ($file = readdir($handle)) {
-                if (preg_match('/^r\.([a-z_]+)\.([0-9a-f]{64})$/', $file, $matches)) {
-                    [, $table, $id] = $matches;
-                    $this->records[$table . '.' . $id] = new Record($this, $table, $id);
+            if ($this->version !== Jars::INITIAL_VERSION) {
+                if (!is_file($this->path())) {
+                    throw new Exception('boom 1');
                 }
+
+                $data = json_decode(file_get_contents($this->path()));
+
+                if (null === $data) {
+                    var_dump($this->path(), file_get_contents($this->path()));
+                    throw new Exception('boom 2');
+                }
+
+                foreach ($data->records ?? [] as $record) {
+                    $table = $record->table;
+                    $id = $record->id;
+
+                    $this->records[$id . '.' . $table] = $record;
+                }
+
+                $this->links = (array) ($data->links ?? []);
+
+                $this->previous = $data->previous;
+                $this->height = $data->height;
+                $this->timestamp = $data->timestamp;
+                $this->meta = (array) ($data->meta ?? []);
             }
+
+            $this->next = @file_get_contents($this->lockFile()) ?: null;
+            $this->loaded = true;
         }
 
         return $this;
@@ -147,7 +192,7 @@ class Block
 
     public function mkdir(): self
     {
-        Helper::mkdir($this->path(), $this->chain->basePath());
+        Helper::mkdir(dirname($this->path()), $this->chain->basePath());
 
         return $this;
     }
@@ -165,9 +210,24 @@ class Block
     {
         $this->mkdir();
 
-        file_put_contents($this->path('previous'), $this->previous);
-        file_put_contents($this->path('height'), $this->height);
-        // file_put_contents($this->path('timestamp'), $this->timestamp);
+        $data = array_filter([
+            'height' => $this->height,
+            'links' => $this->links,
+            'meta' => $this->meta,
+            'previous' => $this->previous,
+            'records' => array_values($this->records),
+            'timestamp' => $this->timestamp,
+        ]);
+
+        $json = json_encode($data, Jars::ENCODING_OPTIONS);
+
+        if (!$json) {
+            array_walk($this->records, function ($r) { if (isset($r->content)) $r->content = 'something'; });
+            var_dump($this->path(), $json, $this->records);
+            throw new Exception('boom 10');
+        }
+
+        file_put_contents($this->path(), $json);
 
         return $this;
     }
@@ -184,16 +244,34 @@ class Block
             return 0;
         }
 
-        if ($this->height !== null) {
-            return $this->height;
+        return $this->height;
+    }
+
+    public function addMeta(string $new): self
+    {
+        $this->meta[] = $new;
+
+        return $this;
+    }
+
+    public function meta(?array $new = null): array|self
+    {
+        if (func_num_args()) {
+            $this->meta = $new;
+
+            return $this;
         }
 
-        return $this->height = (int) file_get_contents($this->path('height'));
+        if ($this->version === Jars::INITIAL_VERSION) {
+            return [];
+        }
+
+        return $this->meta;
     }
 
     public function lockFile(): string
     {
-        return $this->path('next');
+        return $this->path() . '.next';
     }
 
     public function advance(): ?self
@@ -203,5 +281,44 @@ class Block
         }
 
         return $this->chain->getBlock($next);
+    }
+
+    public function timestamp(string $new): string|self
+    {
+        if (func_num_args()) {
+            $this->timestamp = $new;
+
+            return $this;
+        }
+
+        return $this->timestamp;
+    }
+
+    public function preLock(): void
+    {
+        if (Jars::INITIAL_VERSION === $this->version) {
+            $this->mkdir();
+        }
+    }
+
+    public function takeANumber(): string
+    {
+        error_log('hashing [' . $this->pointer . '--' . $this->version . ']');
+        $id = hash('sha256', hex2bin(hash('sha256', $this->pointer . '--' . $this->version)));
+
+        $this->chain->trigger('takeanumber', $this->pointer, $id);
+
+        $this->pointer++;
+
+        return $id;
+    }
+
+    public function pointer(): int
+    {
+        if ($this->version === Jars::INITIAL_VERSION) {
+            return 0;
+        }
+
+        return $this->pointer;
     }
 }

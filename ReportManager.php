@@ -21,7 +21,6 @@ class ReportManager
     private Reporter $reporter;
     private string $reportName;
     private ?string $version = null;
-    private $lock;
 
     public function __construct(Reporter $reporter, string $reportName)
     {
@@ -73,7 +72,7 @@ class ReportManager
 
     public function version_file(): string
     {
-        return $this->jars->db_path("reports/$this->name/version.dat");
+        return $this->jars->db_path("reports/$this->reportName/version.dat");
     }
 
     private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])
@@ -173,6 +172,11 @@ class ReportManager
             throw new Exception('Invalid group');
         }
 
+        // if (VERBOSE) {
+        //     var_dump('<<<<<<<<<<<<<<<<<<<<', $this->reportName . '/' . $group, $this->get($filesystem, $group), '>>>>>>>>>>>>>>>>>>>>');
+        //     echo "\n\n";
+        // }
+
         $data = $callback($this->get($filesystem, $group));
 
         $this->save($group, $data, $filesystem);
@@ -187,14 +191,12 @@ class ReportManager
         }
 
         $export = json_encode($data, self::ENCODING_OPTIONS);
-        $reportfile = $this->path($group . '.json');
+        $reportfile = $this->path(($group ?: '_empty') . '.json');
 
         if ($exists = $export !== json_encode(self::DEFAULT_VALUE, self::ENCODING_OPTIONS)) {
-            // Helper::mkdir(dirname($reportfile), $this->path());
-
             $filesystem->put($reportfile, $export);
         } else {
-            @unlink($reportfile);
+            $filesystem->delete($reportfile);
         }
 
         $this->maintain_groups($group, $exists, $filesystem);

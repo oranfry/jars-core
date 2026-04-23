@@ -39,9 +39,9 @@ class Linetype
                 continue;
             }
 
-            $link = Link::of($this->jars, $incoming->tablelink, $line->id, !@$incoming->reverse);
+            $link = $this->jars->getLink($incoming->tablelink, $line->id, !@$incoming->reverse);
 
-            foreach ($link->relatives() as $parent_id) {
+            foreach ($link as $parent_id) {
                 $parent = $this->jars->linetype($incoming->parent_linetype)->get($token, $parent_id);
                 $parent->_disown = (object) [$link->property => $line->id];
                 $changed[] = $parent;
@@ -312,6 +312,8 @@ class Linetype
 
         $this->load_r($token, $id, $collected);
 
+        // fuse a line from records
+
         $line = (object) array_map(function($callback) use ($collected) {
             return $callback($collected);
         }, $this->fields);
@@ -336,9 +338,8 @@ class Linetype
         }
 
         $childset = [];
-        $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
 
-        if ($child_ids = $link->relatives()) {
+        if ($child_ids = $this->jars->getLink($child->tablelink, $id, @$child->reverse)) {
             $childlinetype = $this->jars->linetype($child->linetype);
 
             foreach ($child_ids as $child_id) {
@@ -364,7 +365,6 @@ class Linetype
         object $line,
         Block $baseBlock,
         Block $newBlock,
-        &$affecteds,
         &$commits,
         $ignorelink = null,
         ?int $logging = null,
@@ -398,9 +398,8 @@ class Linetype
                 throw new Exception('Invalid id encountered');
             }
 
-            $was = null !== $this->jars->blockOf($line->id);
+            $was = $this->jars->blockOfRecord($line->id);
         } else {
-            $line->id = bin2hex(random_bytes(32));
             $was = false;
         }
 
@@ -413,6 +412,14 @@ class Linetype
                 if (!property_exists($line, $property)) {
                     $line->$property = $oldline->$property;
                 }
+            }
+        } else {
+            $id = $newBlock->takeANumber();
+
+            if (!@$line->id) {
+                $line->id = $id;
+            } elseif ($line->id !== $id) {
+                throw new Exception('No such record [' . $this->table . '/' . $line->id . ']');
             }
         }
 
@@ -431,50 +438,37 @@ class Linetype
                 echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
-            if ($was) {
-                $record = clone $oldrecord;
-                $record->move($newBlock);
-            } else {
-                $record = Record::of($newBlock, $this->table, $line->id)
-                    ->init();
-
-                $record->created = $timestamp;
-            }
+            $newBlock->setRecord($this->table, $line->id, $record = $was ? clone $oldrecord : (object) [
+                'table' => $this->table,
+                'id' => $line->id,
+                'created' => $timestamp,
+            ]);
 
             $this->jars->reindexRecord($record, $newBlock);
+            $newBlock->addMeta(($oldrecord ? '~' : '+') . $this->table . ':' . $record->id);
 
             $record->modified = $timestamp;
-            // $record->id = $line->id;
-
-            $affecteds[] = (object) [
-                'id' => $record->id,
-                'table' => $this->table,
-                'action' => 'save',
-                'record' => $record,
-                'oldrecord' => $oldrecord,
-                'oldlinks' => [],
-            ];
         } else { // Remove
             if (!@$line->id) {
                 throw new Exception("Missing id for deletion");
             }
 
-            $oldrecord->assertExistence();
+            // $oldrecord->assertExistence();
 
             if ($logging !== null) {
                 echo str_repeat(' ', $logging * 4) . '-[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
             foreach ($this->find_incoming_links() as $parent) {
-                $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+                $link = $this->jars->getLink($parent->tablelink, $line->id, !@$parent->reverse);
 
-                foreach ($link->relatives() as $parent_id) {
-                    $affecteds[] = (object) [
-                        'action' => 'disconnect',
-                        'tablelink' => $parent->tablelink,
-                        'left' => (@$parent->reverse ? $line->id : $parent_id),
-                        'right' => (@$parent->reverse ? $parent_id : $line->id),
-                    ];
+                foreach ($link as $parent_id) {
+                    $this->jars->disconnect(
+                        $parent->tablelink,
+                        @$parent->reverse ? $line->id : $parent_id,
+                        @$parent->reverse ? $parent_id : $line->id,
+                        $newBlock,
+                    );
 
                     if ($logging !== null) {
                         echo str_repeat(' ', ($logging + 1) * 4) . "<[$parent->tablelink:$parent_id,$line->id]\n";
@@ -483,27 +477,26 @@ class Linetype
             }
 
             foreach ($this->children as $child) {
-                $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
+                $link = $this->jars->getLink($child->tablelink, $line->id, @$child->reverse);
 
                 if (@$child->cascade_delete) {
                     $this->jars->import_r(
                         $timestamp,
-                        array_map(fn ($child_id) => (object) ['type' => $child->linetype, 'id' => $child_id, '_is' => false], $link->relatives()),
+                        array_map(fn ($child_id) => (object) ['type' => $child->linetype, 'id' => $child_id, '_is' => false], $link),
                         $baseBlock,
-                        $affecteds,
                         $commits,
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
                         $differential,
                     );
                 } else {
-                    foreach ($link->relatives() as $child_id) {
-                        $affecteds[] = (object) [
-                            'action' => 'disconnect',
-                            'tablelink' => $child->tablelink,
-                            'left' => (@$child->reverse ? $child_id : $line->id),
-                            'right' => (@$child->reverse ? $line->id : $child_id),
-                        ];
+                    foreach ($link as $child_id) {
+                        $this->jars->disconnect(
+                            $child->tablelink,
+                            @$child->reverse ? $child_id : $line->id,
+                            @$child->reverse ? $line->id : $child_id,
+                            $newBlock,
+                        );
 
                         if ($logging !== null) {
                             echo str_repeat(' ', ($logging + 1) * 4) . "<[$child->tablelink:$line->id,$child_id]\n";
@@ -512,14 +505,9 @@ class Linetype
                 }
             }
 
-            $affecteds[] = (object) [
-                'id' => $oldrecord->id,
-                'table' => $this->table,
-                'action' => 'delete',
-                'record' => null,
-                'oldrecord' => $oldrecord,
-                'oldlinks' => [],
-            ];
+            $this->jars->deindexRecord($oldrecord);
+
+            $newBlock->addMeta('-' . $this->table . ':' . $oldrecord->id);
         }
 
         $this->strip_inline_children($line);
@@ -539,16 +527,12 @@ class Linetype
 
             if (@$line->$alias != @$oldline->$alias) {
                 if (@$oldline->$alias) {
-                    $affecteds[] = (object) [
-                        'action' => 'disconnect',
-                        'left' => (@$parent->reverse ? $line->id : $oldline->$alias),
-                        'right' => (@$parent->reverse ? $oldline->$alias : $line->id),
-                        'tablelink' => $parent->tablelink,
-                        'table' => $parent_table,
-                        'record' => Record::of($this->jars, $parent_table, $line->$alias),
-                        'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
-                        'oldlinks' => [],
-                    ];
+                    $this->jars->disconnect(
+                        $parent->tablelink,
+                        @$parent->reverse ? $line->id : $oldline->$alias,
+                        @$parent->reverse ? $oldline->$alias : $line->id,
+                        $newBlock,
+                    );
 
                     if ($logging !== null) {
                         echo str_repeat(' ', ($logging + 1) * 4) . "<[$parent->tablelink:{$oldline->$alias},$line->id]\n";
@@ -560,16 +544,12 @@ class Linetype
                         throw new Exception($alias . ' should be a string containing the id of another record');
                     }
 
-                    $affecteds[] = (object) [
-                        'action' => 'connect',
-                        'left' => (@$parent->reverse ? $line->id : $line->$alias),
-                        'right' => (@$parent->reverse ? $line->$alias : $line->id),
-                        'tablelink' => $parent->tablelink,
-                        'table' => $parent_table,
-                        'record' => Record::of($this->jars, $parent_table, $line->$alias),
-                        'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
-                        'oldlinks' => [],
-                    ];
+                    $this->jars->connect(
+                        $parent->tablelink,
+                        @$parent->reverse ? $line->id : $line->$alias,
+                        @$parent->reverse ? $line->$alias : $line->id,
+                        $newBlock,
+                    );
 
                     if ($logging !== null) {
                         echo str_repeat(' ', ($logging + 1) * 4) . ">[$parent->tablelink:{$line->$alias},$line->id]\n";
@@ -591,11 +571,11 @@ class Linetype
 
             $child_linetype = $this->jars->linetype($child->linetype);
             $oldchild = null;
-            $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
+            $link = $this->jars->getLink($child->tablelink, $line->id, @$child->reverse);
 
-            if ($oldchild_id = $link->firstChild()) {
-                $oldchild = Record::of($this->jars, $child_linetype->table, $oldchild_id);
-                $oldchild->assertExistence();
+            if ($oldchild_id = reset($link)) {
+                $oldchild = $this->jars->getRecord($child_linetype->table, $oldchild_id);
+                // $oldchild->assertExistence();
             }
 
             if ($is && property_exists($line, $child->property)) { // has
@@ -620,27 +600,27 @@ class Linetype
                         $timestamp,
                         [$childline],
                         $baseBlock,
-                        $affecteds,
+                        $newBlock,
                         $discard,
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
                         $differential,
                     );
 
-                    $affecteds[] = (object) [
-                        'action' => 'connect',
-                        'tablelink' => $child->tablelink,
-                        'left' => (@$child->reverse ? $childlines[0]->id : $line->id),
-                        'right' => (@$child->reverse ? $line->id : $childlines[0]->id),
-                    ];
+                    $this->jars->connect(
+                        $child->tablelink,
+                        @$child->reverse ? $childlines[0]->id : $line->id,
+                        @$child->reverse ? $line->id : $childlines[0]->id,
+                        $newBlock,
+                    );
                 }
             } elseif ($oldchild) { // had and not has
-                $affecteds[] = (object) [
-                    'action' => 'disconnect',
-                    'tablelink' => $child->tablelink,
-                    'left' => (@$child->reverse ? $oldchild->id : $line->id),
-                    'right' => (@$child->reverse ? $line->id : $oldchild->id),
-                ];
+                $this->jars->disconnect(
+                    $child->tablelink,
+                    @$child->reverse ? $oldchild->id : $line->id,
+                    @$child->reverse ? $line->id : $oldchild->id,
+                    $newBlock,
+                );
 
                 if (!@$child->orphanable) {
                     $discard = [];
@@ -650,7 +630,6 @@ class Linetype
                         $timestamp,
                         (object) ['id' => $oldchild->id, '_is' => false],
                         $baseBlock,
-                        $affecteds,
                         $discard,
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
@@ -668,19 +647,25 @@ class Linetype
                     throw new Exception('Unfuse field set to non-callback: ' . $unfuse_field);
                 }
 
-                if (@$tableinfo->format == 'binary' && $unfuse_field != 'content') {
+                if (@$tableinfo->format === 'binary' && $unfuse_field !== 'content') {
                     throw new Exception('disktype \'binary\' does not support unfuse other than content');
                 }
 
-                $record->{$unfuse_field} = $callback($line, $oldline);
+                $value = $callback($line, $oldline);
+                $record->{$unfuse_field} = @$tableinfo->format === 'binary' ? base64_encode($value) : $value;
             }
         }
 
         // $line->version = $newBlock->version();
 
+        if (array_key_exists($line->id, $commits)) {
+            throw new Exception('Commit clash');
+        }
+
         $commit = $this->clone_r($token, $line);
         $this->scrub($token, $commit);
         $commit->type = $this->name;
+        $commit->id = $line->id;
 
         if ($oldline !== null) {
             foreach (array_diff(array_keys(get_object_vars($commit)), ['id', 'type']) as $property) {
@@ -730,9 +715,8 @@ class Linetype
     protected function load_r($token, $id, &$collected, $path = '/', $ignorelink = null)
     {
         $record = $this->jars->getRecord($this->table, $id);
-        $record->assertExistence();
 
-        $collected[$path] = (object) $record->toArray();
+        $collected[$path] = $record;
 
         // recurse to inline children
 
@@ -746,9 +730,8 @@ class Linetype
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
 
-            if ($child_ids = $link->relatives()) {
+            if ($child_ids = $this->jars->getLink($child->tablelink, $id, @$child->reverse)) {
                 $childlinetype = $this->jars->linetype($child->linetype);
 
                 foreach ($child_ids as $child_id) {
@@ -775,13 +758,13 @@ class Linetype
             }
 
             $line->$alias = null;
-            $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+            $link = $this->jars->getLink($parent->tablelink, $line->id, !@$parent->reverse);
 
-            if (!$parent_id = $link->firstChild()) {
+            if (!$parent_id = reset($link)) {
                 continue;
             }
 
-            if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
+            if (!$this->jars->getRecord($this->jars->linetype($parent->parent_linetype)->table, $parent_id)) {
                 throw new Exception('Parent [' . $parent_id . '] does not exist');
             }
 
@@ -852,7 +835,6 @@ class Linetype
         object $line,
         Block $baseBlock,
         Block $newBlock,
-        array &$affecteds,
         array &$commits,
         ?string $ignorelink = null,
         ?int $logging = null,
@@ -882,7 +864,7 @@ class Linetype
                     $timestamp,
                     $childlines,
                     $baseBlock,
-                    $affecteds,
+                    $newBlock,
                     $childcommits,
                     null,
                     $logging !== null ? $logging + 1 : null,
@@ -893,12 +875,13 @@ class Linetype
 
                 foreach ($childlines as $childline) {
                     $childline->$alias = $line->id;
-                    $affecteds[] = (object) [
-                        'action' => 'connect',
-                        'tablelink' => $child->tablelink,
-                        'left' => (@$child->reverse ? $childline->id : $line->id),
-                        'right' => (@$child->reverse ? $line->id : $childline->id),
-                    ];
+
+                    $this->jars->connect(
+                        $child->tablelink,
+                        @$child->reverse ? $childline->id : $line->id,
+                        @$child->reverse ? $line->id : $childline->id,
+                        $newBlock,
+                    );
                 }
             }
 
@@ -907,34 +890,25 @@ class Linetype
                     $child_record = Record::of($this->jars, $child_linetype->table, $child_id);
                     $child_record->assertExistence();
 
-                    $affecteds[] = (object) [
-                        'action' => 'connect',
-                        'tablelink' => $child->tablelink,
-                        'left' => (@$child->reverse ? $child_id : $line->id),
-                        'right' => (@$child->reverse ? $line->id : $child_id),
-                        'table' => $child_linetype->table,
-                        'record' => $child_record,
-                        'oldrecord' => $child_record,
-                        'oldlinks' => [],
-                    ];
+                    $this->jars->connect(
+                        $child->tablelink,
+                        @$child->reverse ? $child_id : $line->id,
+                        @$child->reverse ? $line->id : $child_id,
+                        $newBlock,
+                    );
                 }
             }
 
             if (is_array(@$line->_disown->{$child->property})) {
                 foreach ($line->_disown->{$child->property} as $child_id) {
-                    $child_record = Record::of($this->jars, $child_linetype->table, $child_id);
-                    $child_record->assertExistence();
+                    $child_record = $this->jars->getRecord::of($child_linetype->table, $child_id);
 
-                    $affecteds[] = (object) [
-                        'action' => 'disconnect',
-                        'tablelink' => $child->tablelink,
-                        'left' => (@$child->reverse ? $child_id : $line->id),
-                        'right' => (@$child->reverse ? $line->id : $child_id),
-                        'table' => $child_linetype->table,
-                        'record' => $child_record,
-                        'oldrecord' => $child_record,
-                        'oldlinks' => [],
-                    ];
+                    $this->jars->disconnect(
+                        $child->tablelink,
+                        @$child->reverse ? $child_id : $line->id,
+                        @$child->reverse ? $line->id : $child_id,
+                        $newBlock,
+                    );
                 }
             }
         }

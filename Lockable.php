@@ -4,11 +4,18 @@ namespace OranFry\Jars\Core;
 
 use OranFry\Jars\Contract\Exception;
 use OranFry\Jars\Contract\StaleLockException;
+use OranFry\Jars\Contract\AlreadyLockedException;
 
 trait Lockable
 {
+    private $lock;
+
     public function lock(?int $timeout = null): static
     {
+        if (method_exists($this, 'preLock')) {
+            $this->preLock();
+        }
+
         $time = time();
         $time_rendered = date('Y-m-d H:i:s', $time);
 
@@ -23,7 +30,7 @@ trait Lockable
         }
 
         if (!is_dir($dir)) {
-            throw new Exception("Unable to lock: parent directory does not exist and could not be created");
+            throw new Exception("Unable to lock: parent directory [$dir] does not exist and could not be created");
         }
 
         if (is_file($file)) {
@@ -55,7 +62,7 @@ trait Lockable
                 throw new StaleLockException("Unable to lock: lock exists and is stale [$file], expired by [$over] s expiry [$timestamp_rendered] time [$time_rendered]");
             }
 
-            throw new Exception("Unable to lock: lock exists belonging to another process [$file]");
+            throw new AlreadyLockedException("Unable to lock: lock exists belonging to another process [$file]");
         }
 
         if (!($this->lock = @fopen($file = $this->lockFile(), 'x'))) {

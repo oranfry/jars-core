@@ -4,7 +4,7 @@ namespace OranFry\Jars\Core;
 
 use OranFry\Jars\Contract\Exception;
 
-class Record
+class xRecord
 {
     private ?array $data = null;
     private bool $dirty = false;
@@ -163,6 +163,17 @@ class Record
         return $this->block->path('r.' . $this->table . '.' . $this->id);
     }
 
+    public function data(?array $data = null): array|null|self
+    {
+        if (func_num_args()) {
+            $this->data = $data;
+
+            return $this;
+        }
+
+        return $this->data;
+    }
+
     private function load()
     {
         $this->assertExistence();
@@ -199,7 +210,7 @@ class Record
             return;
         }
 
-        file_put_contents($this->file(), $this->export());
+        // file_put_contents($this->file(), $this->export());
     }
 
     public function version(): string

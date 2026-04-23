@@ -16,7 +16,10 @@ class Helper
             $path = dirname($path)
         ) {
             array_unshift($create, $path);
+            $prev = $path;
         }
+
+        array_unshift($create, $base);
 
         if ($path !== $base) {
             throw new Exception("Block: was unable to track block path back to chain path");

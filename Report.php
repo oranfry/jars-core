@@ -95,4 +95,19 @@ abstract class Report
 
         return $linetypes;
     }
+
+    public function listen(): array
+    {
+        $keys = array_map(fn ($key, $value): string => is_numeric($key) ? $value : $key, array_keys($this->listen), $this->listen);
+
+        $values = array_map(function ($key, $value): object {
+            if (is_numeric($key)) {
+                return (object) [];
+            }
+
+            return $value;
+        }, array_keys($this->listen), $this->listen);
+
+        return array_combine($keys, $values);
+    }
 }

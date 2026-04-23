@@ -12,6 +12,10 @@ use OranFry\Jars\Contract\Exception;
 
 class Jars implements \OranFry\Jars\Contract\Client
 {
+    const INITIAL_VERSION = '00000096d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
+
+    const ENCODING_OPTIONS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
+
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
 
@@ -23,35 +27,26 @@ class Jars implements \OranFry\Jars\Contract\Client
     private array $verified_tokens = [];
     private Config $config;
     private int $pointer = 1;
-    private string $randomness;
 
-    public ?Index $index = null;
-    public ?Chain $chain = null;
-    public ?Reporter $reporter = null;
+    public Master $master;
+    public Chain $chain;
+    public Index $index;
+    public Reporter $reporter;
 
-    const INITIAL_VERSION = '00000096d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
-
-    public function __construct(Config $config, ?string $chain_home = null, ?string $index_home = null, ?string $reports_home = null)
+    public function __construct(Config $config, string $chainHome, string $indexHome, string $reportsHome, string $masterHome)
     {
         if (!($config->linetypes()['token'] ?? null)) {
             throw new Exception('Missing token linetype');
         }
 
+        // var_dump($config->tables()); die();
+
         $this->config = $config;
 
-        if ($index_home) {
-            $this->index = new Index($this, $index_home);
-        }
-
-        if ($chain_home) {
-            $this->chain = new Chain($this, $chain_home);
-        }
-
-        if ($reports_home) {
-            $this->reporter = new Reporter($this, $reports_home);
-        }
-
-        $this->randomness = random_bytes(128);
+        $this->index = new Index($this, $indexHome);
+        $this->chain = new Chain($this, $chainHome);
+        $this->reporter = new Reporter($this, $reportsHome);
+        $this->master = new Master($this, $masterHome);
     }
 
     private static function array_keys_recursive(array $array, string $separtor = '/'): array
@@ -101,19 +96,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         return array_values($classify); // be forgiving of non-numeric or non-sequential indices
-    }
-
-    private function commit(Block $newBlock, string $timestamp, array $commits, array $meta): void
-    {
-        foreach ($commits as $id => $commit) {
-            if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
-                unset($commits[$id]);
-            }
-        }
-
-        file_put_contents($newBlock->path('timestamp'), $timestamp);
-        file_put_contents($newBlock->path('master'), json_encode(array_values($commits), JSON_UNESCAPED_SLASHES));
-        file_put_contents($newBlock->path('meta'), implode("\n", $meta));
     }
 
     public function config()
@@ -406,113 +388,126 @@ class Jars implements \OranFry\Jars\Contract\Client
         bool $dryrun = false,
         ?int $logging = null,
         bool $differential = false,
+        ?string $version = null,
     ): array
     {
-        $baseBlock = $this
-            ->chain
-            ->getBlock($baseVersion ?? static::INITIAL_VERSION);
-
-        $affecteds = [];
-        $commits = [];
-
-        $newBlock = $this
-            ->chain
-            ->createBlock($baseBlock)
-            ->save();
-
-        static::debug_push('Jars::import_r');
-
-        $lines = $this->import_r(
-            $timestamp,
-            $lines,
-            $baseBlock,
-            $newBlock,
-            $affecteds,
-            $commits,
-            null,
-            $logging,
-            $differential,
-        );
-
-        static::debug_pop();
-
-        if (!count($commits = array_filter($commits))) {
-            return [];
-        }
-
-        static::debug_push('Process affecteds');
-        foreach ($affecteds as $affected) {
-            switch ($affected->action) {
-                case 'connect':
-                    Link::of($this, $affected->tablelink, $affected->left)
-                        ->add($affected->right)
-                        ->save();
-
-                    Link::of($this, $affected->tablelink, $affected->right, true)
-                        ->add($affected->left)
-                        ->save();
-
-                    $meta[] = '>' . $affected->tablelink . ':' . $affected->left . ',' . $affected->right;
-
-                    break;
-
-                case 'delete':
-                    $affected->oldrecord->delete();
-                    $meta[] = '-' . $affected->table . ':' . $affected->id;
-
-                    break;
-
-                case 'disconnect':
-                    Link::of($this, $affected->tablelink, $affected->left)
-                        ->remove($affected->right)
-                        ->save();
-
-                    Link::of($this, $affected->tablelink, $affected->right, true)
-                        ->remove($affected->left)
-                        ->save();
-
-                    $meta[] = '<' . $affected->tablelink . ':' . $affected->left . ',' . $affected->right;
-
-                    break;
-
-                case 'save':
-                    $affected->record->save();
-                    $meta[] = ($affected->oldrecord ? '~' : '+') . $affected->table . ':' . $affected->id;
-
-                    break;
-
-                default:
-                    throw new Exception('Unknown action: ' . @$affected->action);
-            }
-        }
-        static::debug_pop();
-
-        static::debug_push('Dredge');
-        $updated = $this->dredge_r($lines, $newBlock->version());
-        static::debug_pop();
-
-        static::debug_push('Commit');
-        $this->commit($newBlock, $timestamp, $commits, $meta);
-        static::debug_pop();
-
         if (!$dryrun) {
-            static::debug_push('Add to chain');
+            try {
+                $headBlock = $this
+                    ->headBlock()
+                    ->lock();
+            } catch (\OranFry\Jars\Contract\AlreadyLockedException $e) {
+                throw new ConcurrentModificationException($e->getMessage());
+            }
+        }
 
-            if (Jars::INITIAL_VERSION === $baseBlock->version()) {
-                $baseBlock->mkdir();
+        $success = false;
+
+        try {
+            $baseBlock = $this
+                ->chain
+                ->getBlock($baseVersion ?? static::INITIAL_VERSION);
+
+            $comodified = [];
+
+            while ($baseBlock && $baseBlock !== $headBlock) {
+                foreach ($this->meta_ids($baseBlock->meta()) as $comodifiedId) {
+                    $comodified[$comodifiedId] = true;
+                }
+
+                $baseBlock = $baseBlock->advance();
             }
 
-            static::debug_push('Link to previous block');
+            if (!$baseBlock) {
+                throw new Exception('Unknown base block or could not advance to head from given base block');
+            }
 
-            $baseBlock
-                ->lock()
-                ->setNext($newBlock->version())
-                ->unlock();
+            // baseBlock is now identical to headBlock, this is just a sanity check for certainty
+
+            if ($baseBlock !== $headBlock) {
+                throw new Exception('Unexpected condition, baseBlock is not identical to headBlock');
+            }
+
+            $comodified = array_keys($comodified);
+
+            $commits = [];
+
+            $newBlock = $this
+                ->chain
+                ->createBlock($baseBlock, $timestamp);
+
+            if ($version !== null) {
+                $newBlock->version($version);
+            }
+
+            static::debug_push('Jars::import_r');
+
+            $lines = $this->import_r(
+                $timestamp,
+                $lines,
+                $baseBlock,
+                $newBlock,
+                $commits,
+                null,
+                $logging,
+                $differential,
+            );
 
             static::debug_pop();
 
-            static::debug_push('Update index');
+            if (!count($commits = array_filter($commits))) {
+                return [];
+            }
 
+            static::debug_push('Check for comodification');
+
+            $add_meta = array_filter($newBlock->meta(), fn ($change) => substr($change, 0, 1) === '+');
+            $nonadd_meta = array_filter($newBlock->meta(), fn ($change) => substr($change, 0, 1) !== '+');
+            $modified = array_diff($this->meta_ids($nonadd_meta), $this->meta_ids($add_meta));
+
+            // complain if this would cause concurrent modification
+
+            if ($conflict = array_intersect($comodified, $modified)) {
+                throw new ConcurrentModificationException("Record modification conflict: " . implode(', ', $conflict));
+            }
+
+            static::debug_pop();
+
+            $newBlock->save();
+
+            static::debug_push('Dredge');
+            $updated = $this->dredge_r($lines, $newBlock->version());
+            static::debug_pop();
+
+            if (!$dryrun) {
+                if (Jars::INITIAL_VERSION === $baseBlock->version()) {
+                    $baseBlock->mkdir();
+                }
+
+                static::debug_push('Link to previous block');
+
+                // try {
+                //     $baseBlock->lock();
+                // } catch (\OranFry\Jars\Contract\AlreadyLockedException $e) {
+                //     throw new ConcurrentModificationException($e->getMessage());
+                // }
+
+                $baseBlock->setNext($newBlock->version());
+                $success = true;
+
+                static::debug_pop();
+            }
+        } finally {
+            $headBlock->unlock();
+
+            if (!$success) {
+                unlink($headBlock->lockFile());
+            }
+        }
+
+        static::debug_push('Update index');
+
+        if (!$dryrun) {
             $this
                 ->index
                 ->safeLock(10)
@@ -521,14 +516,45 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             static::debug_pop();
 
+            static::debug_push('Write master');
+
+            $this->master->write(
+                $baseBlock->version(),
+                $newBlock->version(),
+                $timestamp,
+                json_encode(array_values($commits), JSON_UNESCAPED_SLASHES),
+            );
+
             static::debug_pop();
         }
 
         static::debug_push('Trigger entryimported');
+
         $this->trigger('entryimported');
+
         static::debug_pop();
 
         return $updated;
+    }
+
+    public function connect(string $tablelink, string $left, string $right, Block $newBlock): self
+    {
+        $newBlock->addLink($tablelink, $left, false, $right);
+        $newBlock->addLink($tablelink, $right, true, $left);
+
+        $newBlock->addMeta('>' . $tablelink . ':' . $left . ',' . $right);
+
+        return $this;
+    }
+
+    public function disconnect(string $tablelink, string $left, string $right, Block $newBlock): self
+    {
+        $newBlock->removeLink($tablelink, $left, false, $right);
+        $newBlock->removeLink($tablelink, $right, true, $left);
+
+        $newBlock->addMeta('<' . $tablelink . ':' . $left . ',' . $right);
+
+        return $this;
     }
 
     public function import_r(
@@ -536,7 +562,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         array $lines,
         Block $baseBlock,
         Block $newBlock,
-        array &$affecteds,
         array &$commits,
         ?string $ignorelink = null,
         ?int $logging = null,
@@ -566,7 +591,6 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $line,
                     $baseBlock,
                     $newBlock,
-                    $affecteds,
                     $commits,
                     $ignorelink,
                     $logging,
@@ -582,7 +606,6 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $line,
                     $baseBlock,
                     $newBlock,
-                    $affecteds,
                     $commits,
                     $ignorelink,
                     $logging,
@@ -841,9 +864,9 @@ class Jars implements \OranFry\Jars\Contract\Client
         return hash('sha256', hex2bin(hash('sha256', $n . '--' . $sequence->secret())));
     }
 
-    public static function of(Config $config, ?string $chain_home = null, ?string $index_home = null, ?string $reports_home = null): self
+    public static function of(Config $config, string $chainHome, string $indexHome, string $reportsHome, string $masterHome): self
     {
-        return new Jars($config, $chain_home, $index_home, $reports_home);
+        return new Jars($config, $chainHome, $indexHome, $reportsHome, $masterHome);
     }
 
     public function persist(): self
@@ -877,14 +900,14 @@ class Jars implements \OranFry\Jars\Contract\Client
             foreach ($relationships as $relationship) {
                 $direction = ($relationship->reverse ?? false) ? 'forth' : 'back';
                 $lost_relatives = $relatives[$relationship->tablelink][$direction][$id] ?? [];
-                $current_relatives = Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)->relatives();
+                $current_relatives = $this->getLink($relationship->tablelink, $id, !@$relationship->reverse);
                 $_relatives = array_unique(array_merge($lost_relatives, $current_relatives));
 
                 foreach ($_relatives as $relative_id) {
                     $relative_linetype = $this->linetype($relationship->parent_linetype);
                     $table_name = $relative_linetype->table;
 
-                    if (!Record::of($this, $table_name, $relative_id)->exists()) {
+                    if (!$this->getRecord($table_name, $relative_id)) {
                         continue;
                     }
 
@@ -913,17 +936,21 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        $contents = Record::of($this, $table_name, $id)
-            ->currentContents();
+        $record = $this->getRecord($table_name, $id);
+        $tableinfo = $this->config()->tables()[$table_name] ?? (object) [];
 
-        // if ($contents !== null) {
+        if (@$tableinfo->format === 'binary') {
+            return base64_decode($record->content);
+        }
+
+        // if ($record !== null) {
         //     $this->head = $this->db_version();
         // }
 
-        return $contents;
+        return json_encode($record, self::ENCODING_OPTIONS);
     }
 
-    public function blockOf(string $recordId): ?Block
+    public function blockOfRecord(string $recordId): ?Block
     {
         $version = $this->index->recordVersion($recordId);
 
@@ -934,11 +961,35 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->chain->getBlock($version);
     }
 
-    public function getRecord(string $table, string $id): Record
+    public function getRecord(string $table, string $id): ?object
     {
-        return $this
-            ->blockOf($id)
-            ->getRecord($table, $id);
+        $block = $this->blockOfRecord($id);
+
+        if (!$block) {
+            return null;
+        }
+
+        return $block->getRecord($table, $id);
+    }
+
+    public function blockOfLink(string $linkName, string $recordId, ?bool $reverse = false): ?Block
+    {
+        $version = $this->index->linkVersion($linkName, $recordId, (bool) $reverse);
+
+        if ($version === null) {
+            return null;
+        }
+
+        return $this->chain->getBlock($version);
+    }
+
+    public function getLink(string $linkName, string $recordId, ?bool $reverse = false): array
+    {
+        if (!$block = $this->blockOfLink($linkName, $recordId, (bool) $reverse)) {
+            return [];
+        }
+
+        return $block->getLink($linkName, $recordId, (bool) $reverse);
     }
 
     public function refresh(): string
@@ -1013,7 +1064,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     continue;
                 }
 
-                $metas[$version] ??= explode("\n", file_get_contents($block->path('meta')));
+                $metas[$version] ??= $block->meta();
 
                 foreach ($metas[$version] as $meta) {
                     // connection
@@ -1063,22 +1114,20 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             $report_affected = false;
 
+            $listens = $report->listen();
+
+            $listenTables = array_unique(array_filter(array_map(function ($to, $listen) {
+                if (preg_match('/^report:/', $to)) {
+                    return false;
+                }
+
+                return $this->linetype($to)->table;
+            }, array_keys($listens), $listens)));
+
+            $changes = array_filter($changes, fn ($change) => in_array($change->table, $listenTables));
+
             foreach ($changes as $id => $change) {
-                foreach ($report->listen as $linetype_name => $listen) {
-                    if (is_numeric($linetype_name)) {
-                        $linetype_name = $listen;
-                        $listen = (object) [];
-                    }
-
-                    if (preg_match('/^report:/', $linetype_name)) {
-                        continue;
-                    }
-
-
-                    if ($change->table != $this->linetype($linetype_name)->table) {
-                        continue;
-                    }
-
+                foreach ($listens as $linetype_name => $listen) {
                     $report_affected = true;
                     $current_groups = [];
                     $past_groups = [];
@@ -1128,7 +1177,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     }
 
                     if ($current_groups) {
-                        $filesystem->put($groups_file, json_encode($current_groups, JSON_UNESCAPED_SLASHES));
+                        $filesystem->put($groups_file, json_encode($current_groups, self::ENCODING_OPTIONS));
                     } elseif ($filesystem->has($groups_file)) {
                         $filesystem->delete($groups_file);
                     }
@@ -1266,7 +1315,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                         $group_file = $manager->path(($derived_groupname ?: '_empty') . '.json');
 
                         if ($exists = $cache[$derived_reportname][$derived_groupname] !== null) {
-                            $filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname], JSON_UNESCAPED_SLASHES));
+                            $filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname], self::ENCODING_OPTIONS));
 
                             if (!in_array($derived_groupname, $groups)) {
                                 $groups[] = $derived_groupname;
@@ -1393,11 +1442,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         // $this->head = $this->index->head();
 
         return $result;
-    }
-
-    public function takeanumber(): string
-    {
-        return hash('sha256', $this->randomness . '--' . $this->pointer++);
     }
 
     public function token(?string $token = null): self|string|null
@@ -1540,9 +1584,16 @@ class Jars implements \OranFry\Jars\Contract\Client
         return touch($file) && is_writable($file);
     }
 
-    public function reindexRecord(Record $record, Block $block): self
+    public function reindexRecord(object $record, Block $block): self
     {
         $this->index->recordVersion($record->id, $block->version());
+
+        return $this;
+    }
+
+    public function deindexRecord(object $record): self
+    {
+        $this->index->recordVersion($record->id, null);
 
         return $this;
     }
@@ -1579,5 +1630,12 @@ class Jars implements \OranFry\Jars\Contract\Client
         $this->index->unlock();
 
         return $this;
+    }
+
+    public function headBlock(): Block
+    {
+        return $this
+            ->chain
+            ->getBlock($this->index->head());
     }
 }

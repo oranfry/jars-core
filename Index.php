@@ -16,7 +16,7 @@ class Index
     private ?string $locker_pin = null;
 
     private array $recordVersions = [];
-    private $lock;
+    private array $linkVersions = [];
 
     public function __construct(Jars $jars, string $basePath)
     {
@@ -62,31 +62,33 @@ class Index
     public function recordVersion(string $id, ?string $version = null): null|string|self
     {
         if (func_num_args() > 1) {
-            // echo "set $id -> $version\n";
-
-            // foreach (debug_backtrace() as $item) {
-            //     echo @$item['file'] . ':' . @$item['line'] . "\n";
-            // }
-            // echo "------\n\n";
-
             $this->recordVersions[$id] = $version;
 
             return $this;
         }
 
         if (!array_key_exists($id, $this->recordVersions)) {
-            $this->recordVersions[$id] = $version = is_file($file = $this->dataFile($id, 'v')) ? file_get_contents($file) : null;
-
-            // echo "load $id -> $version\n";
-
-            // foreach (debug_backtrace() as $item) {
-            //     echo @$item['file'] . ':' . @$item['line'] . "\n";
-            // }
-            // echo "------\n\n";
-
+            $this->recordVersions[$id] = $version = is_file($file = $this->dataFile($id)) ? file_get_contents($file) : null;
         }
 
         return $this->recordVersions[$id];
+    }
+
+    public function linkVersion(string $linkName, string $recordId, ?bool $reverse, ?string $version = null): null|string|self
+    {
+        $key = $recordId . '.' . $linkName . '.' . ($direction = $reverse ? 'back' : 'forth');
+
+        if (func_num_args() > 3) {
+            $this->linkVersions[$key] = $version;
+
+            return $this;
+        }
+
+        if (!array_key_exists($key, $this->linkVersions)) {
+            $this->linkVersions[$key] = $version = is_file($file = $this->dataFile($recordId, $linkName, $direction)) ? file_get_contents($file) : null;
+        }
+
+        return $this->linkVersions[$key];
     }
 
     function addToChain($newBlock): self
@@ -94,7 +96,12 @@ class Index
         $newVersion = $newBlock->version();
 
         foreach ($newBlock->recordIds() as $id) {
-            Helper::mkdir(dirname($file = $this->dataFile($id, 'v')), $this->basePath);
+            Helper::mkdir(dirname($file = $this->dataFile($id)), $this->basePath);
+            file_put_contents($file, $newVersion);
+        }
+
+        foreach ($newBlock->linkKeys() as $key) {
+            Helper::mkdir(dirname($file = $this->dataFile(...explode('.', $key))), $this->basePath);
             file_put_contents($file, $newVersion);
         }
 
