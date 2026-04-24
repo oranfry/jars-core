@@ -166,4 +166,15 @@ class Index
 
         return $this;
     }
+
+    public function revert(): self
+    {
+        $this->head = null;
+        $this->height = null;
+        $this->locker_pin = null;
+        $this->recordVersions = [];
+        $this->linkVersions = [];
+
+        return $this;
+    }
 }

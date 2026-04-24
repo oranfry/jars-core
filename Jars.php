@@ -391,11 +391,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         ?string $version = null,
     ): array
     {
+        $headBlock = $this->headBlock();
+
         if (!$dryrun) {
             try {
-                $headBlock = $this
-                    ->headBlock()
-                    ->lock();
+                $headBlock->lock();
             } catch (\OranFry\Jars\Contract\AlreadyLockedException $e) {
                 throw new ConcurrentModificationException($e->getMessage());
             }
@@ -468,12 +468,21 @@ class Jars implements \OranFry\Jars\Contract\Client
             // complain if this would cause concurrent modification
 
             if ($conflict = array_intersect($comodified, $modified)) {
-                throw new ConcurrentModificationException("Record modification conflict: " . implode(', ', $conflict));
+                throw new ConcurrentModificationException(
+                    "Record modification conflict: " .
+                    $baseBlock->version() .
+                    ' vs ' .
+                    $newBlock->version() .
+                    ':' .
+                    implode(', ', $conflict),
+                );
             }
 
             static::debug_pop();
 
-            $newBlock->save();
+            if (!$dryrun) {
+                $newBlock->save();
+            }
 
             static::debug_push('Dredge');
             $updated = $this->dredge_r($lines, $newBlock->version());
@@ -498,16 +507,20 @@ class Jars implements \OranFry\Jars\Contract\Client
                 static::debug_pop();
             }
         } finally {
-            $headBlock->unlock();
+            if (!$dryrun) {
+                $headBlock->unlock();
 
-            if (!$success) {
-                unlink($headBlock->lockFile());
+                if (!$success) {
+                    unlink($headBlock->lockFile());
+                }
             }
         }
 
         static::debug_push('Update index');
 
-        if (!$dryrun) {
+        if ($dryrun) {
+           $this->index->revert();
+        } else {
             $this
                 ->index
                 ->safeLock(10)
