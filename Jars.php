@@ -434,11 +434,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             $newBlock = $this
                 ->chain
-                ->createBlock($baseBlock, $timestamp);
-
-            if ($version !== null) {
-                $newBlock->version($version);
-            }
+                ->createBlock($baseBlock, $timestamp, $version);
 
             static::debug_push('Jars::import_r');
 

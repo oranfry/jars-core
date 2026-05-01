@@ -35,9 +35,13 @@ class Chain
         return $this->blocks[$version];
     }
 
-    public function createBlock(Block $base, string $timestamp): Block
+    public function createBlock(Block $base, string $timestamp, ?string $version = null): Block
     {
-        $version = bin2hex(random_bytes(32));
+        if ($version === null) {
+            $version = bin2hex(random_bytes(32));
+        } elseif (!preg_match('/^[a-f0-9]{64}$/', $version)) {
+            throw new Exception('Invalid id encountered');
+        }
 
         return $this->blocks[$version] = (new Block($this, $version))
             ->previous($base->version())
@@ -58,5 +62,12 @@ class Chain
     public function trigger(string $event, ...$arguments): void
     {
         $this->jars->trigger($event, ...$arguments);
+    }
+
+    public function blockExists(string $version): bool
+    {
+        return $version === Jars::INITIAL_VERSION
+            || array_key_exists($version, $this->blocks)
+            || is_file($this->dataFile($version));
     }
 }

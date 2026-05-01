@@ -30,20 +30,11 @@ class Block
 
     public function assertExistence(): self
     {
-        if (!$this->exists()) {
+        if (!$this->chain->blockExists($this->version)) {
             throw new Exception("Block: no such version [$this->version]");
         }
 
         return $this;
-    }
-
-    public function exists()
-    {
-        if ($this->version === Jars::INITIAL_VERSION) {
-            return true; // empty base block with implicit existence
-        }
-
-        return is_file($this->path());
     }
 
     public function path(): string
@@ -100,18 +91,8 @@ class Block
         return array_keys($this->links);
     }
 
-    public function version(?string $new = null): self|string
+    public function version(): string
     {
-        if (func_num_args()) {
-            if (!preg_match('/^[a-f0-9]{64}$/', $new)) {
-                throw new Exception('Invalid id encountered');
-            }
-
-            $this->version = $new;
-
-            return $this;
-        }
-
         return $this->version;
     }
 
@@ -303,7 +284,6 @@ class Block
 
     public function takeANumber(): string
     {
-        error_log('hashing [' . $this->pointer . '--' . $this->version . ']');
         $id = hash('sha256', hex2bin(hash('sha256', $this->pointer . '--' . $this->version)));
 
         $this->chain->trigger('takeanumber', $this->pointer, $id);
