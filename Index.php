@@ -74,9 +74,9 @@ class Index
         return $this->recordVersions[$id];
     }
 
-    public function linkVersion(string $linkName, string $recordId, ?bool $reverse, ?string $version = null): null|string|self
+    public function linkVersion(string $linkName, string $recordId, bool $reverse, ?string $version = null): null|string|self
     {
-        $key = $recordId . '.' . $linkName . '.' . ($direction = $reverse ? 'back' : 'forth');
+        $key = Block::linkKey($linkName, $recordId, $reverse);
 
         if (func_num_args() > 3) {
             $this->linkVersions[$key] = $version;
@@ -85,32 +85,50 @@ class Index
         }
 
         if (!array_key_exists($key, $this->linkVersions)) {
-            $this->linkVersions[$key] = $version = is_file($file = $this->dataFile($recordId, $linkName, $direction)) ? file_get_contents($file) : null;
+            $file = $this->dataFile($recordId, $linkName, $reverse ? 'back' : 'forth');
+
+            if (!is_file($file)) {
+                return null;
+            }
+
+            $this->linkVersions[$key] = file_get_contents($file);
         }
 
         return $this->linkVersions[$key];
     }
 
-    function addToChain($newBlock): self
+    function addToChain($newBlock, bool $permanent = true): self
     {
         $newVersion = $newBlock->version();
 
         foreach ($newBlock->recordIds() as $id) {
-            Helper::mkdir(dirname($file = $this->dataFile($id)), $this->basePath);
-            file_put_contents($file, $newVersion);
+            if ($permanent) {
+                $file = $this->dataFile($id);
+
+                Helper::mkdir(dirname($file), $this->basePath);
+                file_put_contents($file, $newVersion);
+            }
+
+            $this->recordVersions[$id] = $newVersion;
         }
 
         foreach ($newBlock->linkKeys() as $key) {
-            Helper::mkdir(dirname($file = $this->dataFile(...explode('.', $key))), $this->basePath);
-            file_put_contents($file, $newVersion);
+            if ($permanent) {
+                $file = $this->dataFile(...explode('.', $key));
+
+                Helper::mkdir(dirname($file), $this->basePath);
+                file_put_contents($file, $newVersion);
+            }
+
+            $this->linkVersions[$key] = $newVersion;
         }
 
-        // $file = $this->dataFile($id, 'bm'); // block meta, maybe implement?
+        $this->head = $newVersion;
 
-        $this->head = $newBlock->version();
-
-        file_put_contents($this->basePath . '/head', $newVersion);
-        file_put_contents($this->basePath . '/height', $height = $newBlock->height());
+        if ($permanent) {
+            file_put_contents($this->basePath . '/head', $newVersion);
+            file_put_contents($this->basePath . '/height', $height = $newBlock->height());
+        }
 
         if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
             error_log("Added block to index [$newVersion] [$height]");

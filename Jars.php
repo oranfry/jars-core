@@ -478,24 +478,12 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             if (!$dryrun) {
                 $newBlock->save();
-            }
 
-            static::debug_push('Dredge');
-            $updated = $this->dredge_r($lines, $newBlock->version());
-            static::debug_pop();
-
-            if (!$dryrun) {
                 if (Jars::INITIAL_VERSION === $baseBlock->version()) {
                     $baseBlock->mkdir();
                 }
 
                 static::debug_push('Link to previous block');
-
-                // try {
-                //     $baseBlock->lock();
-                // } catch (\OranFry\Jars\Contract\AlreadyLockedException $e) {
-                //     throw new ConcurrentModificationException($e->getMessage());
-                // }
 
                 $baseBlock->setNext($newBlock->version());
                 $success = true;
@@ -513,34 +501,38 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         static::debug_push('Update index');
+        if (!$dryrun) {
+            $this->index->safeLock(10);
+        }
 
-        if ($dryrun) {
-           $this->index->revert();
-        } else {
-            $this
-                ->index
-                ->safeLock(10)
-                ->addToChain($newBlock)
-                ->unlock();
+        $this->index->addToChain($newBlock, !$dryrun);
 
-            static::debug_pop();
+        if (!$dryrun) {
+            $this->index->unlock();
+        }
+        static::debug_pop();
 
+        if (!$dryrun) {
             static::debug_push('Write master');
-
             $this->master->write(
                 $baseBlock->version(),
                 $newBlock->version(),
                 $timestamp,
                 json_encode(array_values($commits), JSON_UNESCAPED_SLASHES),
             );
-
             static::debug_pop();
         }
 
+        static::debug_push('Dredge');
+        $updated = $this->dredge_r($lines, $newBlock->version());
+        static::debug_pop();
+
+        if ($dryrun) {
+           $this->index->revert();
+        }
+
         static::debug_push('Trigger entryimported');
-
         $this->trigger('entryimported');
-
         static::debug_pop();
 
         return $updated;

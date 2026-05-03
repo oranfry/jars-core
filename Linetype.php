@@ -512,7 +512,7 @@ class Linetype
 
         $this->strip_inline_children($line);
 
-        if ($this->is($line)) { // Add or Update
+        if ($is) { // Add or Update
             $this->unpack($line, $oldline);
         }
 
@@ -561,10 +561,6 @@ class Linetype
         // recurse to inline children
 
         foreach (@$this->inlinelinks ?? [] as $child) {
-            if ($child->tablelink == $ignorelink) {
-                continue;
-            }
-
             if (!@$child->property) {
                 throw new Exception('Inlinelink without property');
             }
@@ -721,12 +717,12 @@ class Linetype
         // recurse to inline children
 
         foreach (@$this->inlinelinks ?? [] as $child) {
-            if ($ignorelink && $child->tablelink == $ignorelink) {
-                continue;
-            }
-
             if (!@$child->property) {
                 throw new Exception('Inline link without property');
+            }
+
+            if ($ignorelink && $child->tablelink == $ignorelink) {
+                continue;
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;

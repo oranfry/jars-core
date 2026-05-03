@@ -27,7 +27,7 @@ class xLink
 
     public function find(): self
     {
-        $this->version = $this->jars->linkVersion($this->id);
+        $this->version = $this->jars->xlinkVersion($this->id);
     }
 
     public function firstChild()

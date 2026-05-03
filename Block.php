@@ -53,19 +53,20 @@ class Block
 
         return $this;
     }
-    private function linkKey(string $linkName, string $recordId, ?bool $reverse): string
+
+    public static function linkKey(string $linkName, string $recordId, ?bool $reverse): string
     {
         return $recordId . '.' . $linkName . '.' . ($reverse ? 'back' : 'forth');
     }
 
     public function getLink(string $linkName, string $recordId, ?bool $reverse): array
     {
-        return $this->links[$this->linkKey($linkName, $recordId, $reverse)];
+        return $this->links[self::linkKey($linkName, $recordId, $reverse)];
     }
 
     public function addLink(string $linkName, string $recordId, ?bool $reverse, string $relative): self
     {
-        $key = $this->linkKey($linkName, $recordId, $reverse);
+        $key = self::linkKey($linkName, $recordId, $reverse);
 
         $this->links[$key] = array_values(array_unique(array_merge($this->links[$key] ?? [], [$relative])));
 
@@ -74,7 +75,7 @@ class Block
 
     public function removeLink(string $linkName, string $recordId, ?bool $reverse, string $relative): self
     {
-        $key = $this->linkKey($linkName, $recordId, $reverse);
+        $key = self::linkKey($linkName, $recordId, $reverse);
 
         $this->links[$key] = array_values(array_filter($this->links[$key] ?? [], fn ($value) => $value !== $relative));
 
