@@ -2,6 +2,7 @@
 
 namespace OranFry\Jars\Core;
 
+use Closure;
 use OranFry\Jars\Contract\Exception;
 
 class Reporter
@@ -42,5 +43,20 @@ class Reporter
         }
 
         return $this->managers[$report];
+    }
+
+    public function getBlock(string $version): Block
+    {
+        return $this->jars->getBlock($version);
+    }
+
+    public function headBlock(): Block
+    {
+        return $this->jars->headBlock();
+    }
+
+    public function iterateBlocks(Block $block, ?Closure $callback = null): object
+    {
+        return $this->jars->iterateBlocks($block, $callback);
     }
 }

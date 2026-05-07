@@ -63,37 +63,39 @@ class ReportManager
             return $this->version;
         }
 
-        if (is_file($file = $this->path('._version'))) {
+        if (is_file($file = $this->version_file())) {
             return $this->version = file_get_contents($file);
         }
 
-        return $this->version = Jars::INITIAL_VERSION;
+        return $this->version = Jars::ROOT_VERSION;
     }
 
     public function version_file(): string
     {
-        return $this->jars->db_path("reports/$this->reportName/version.dat");
+        return $this->path('._version');
     }
 
-    private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])
+    private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = []): bool
     {
-        $min_version_file = $this->jars->version_file($min_version);
+        $minBlock = $this->reporter->getBlock($min_version);
 
-        if (null === $min_version_raw = $this->filesystem->get($min_version_file)) {
-            $this->filesystem->forget($min_version_file);
-
+        if (null === $minBlock) {
             throw new Exception('No such version');
         }
 
-        $version_file = $this->version_file();
-        $current_version = $feedback['current_version'] = $this->filesystem->get($version_file);
+        $info = $this->reporter->iterateBlocks($minBlock);
 
-        $this->filesystem->forget($version_file);
+        if (!$info->final) {
+            throw new Exception('Head not reachable from min block');
+        }
 
-        $min_version_num = $feedback['min_version_num'] = (int) $min_version_raw;
-        $current_version_number = $feedback['current_version_number'] = (int) $this->filesystem->get($this->jars->version_file($current_version));
+        $currentVersion = $feedback['current_version'] = file_get_contents($this->version_file());
+        $currentBlock = $this->reporter->getBlock($currentVersion);
 
-        if ($current_version_number >= $min_version_num) {
+        $currentNumber = $feedback['current_version_number'] = $currentBlock->height();
+        $minNumber = $feedback['min_version_num'] = $minBlock->height();
+
+        if ($currentNumber >= $minNumber) {
             return true;
         }
 
@@ -104,14 +106,14 @@ class ReportManager
         return false;
     }
 
-    private function wait_for_version(string $min_version, ?int $timeout_microseconds = null): void
+    private function wait_for_version(string $min_version, int $timeout_microseconds): void
     {
         if (!preg_match('/^[a-f0-9]{64}$/', $min_version)) {
             throw new Exception('Invalid minimum version [' . $min_version . ']');
         }
 
         foreach (static::VERSION_WAIT_TRIES as $try) {
-            if ($this->version_requirement_met($min_version, (int) ($try * ($timeout_microseconds ?? static::DEFAULT_TIMEOUT)), $feedback)) {
+            if ($this->version_requirement_met($min_version, (int) ($try * $timeout_microseconds), $feedback)) {
                 return;
             }
         }
@@ -131,7 +133,7 @@ class ReportManager
         return $this;
     }
 
-    public function get(Filesystem $filesystem, string $group, ?string $min_version = null, ?int $timeout_microseconds = null)
+    public function get(Filesystem $filesystem, string $group, ?string $min_version, int $timeout_microseconds)
     {
         if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
             throw new Exception('Invalid group');
@@ -146,7 +148,7 @@ class ReportManager
         return json_decode($filesystem->get($file) ?? '[]');
     }
 
-    public function groups(Filesystem $filesystem, string $prefix = '', ?string $min_version = null, ?int $timeout_microseconds = null): array
+    public function groups(Filesystem $filesystem, string $prefix, ?string $min_version, ?int $timeout_microseconds): array
     {
         if (!preg_match('/^' . Constants::GROUP_PREFIX_PATTERN . '$/', $prefix)) {
             throw new Exception('Invalid prefix');
@@ -177,7 +179,7 @@ class ReportManager
         //     echo "\n\n";
         // }
 
-        $data = $callback($this->get($filesystem, $group));
+        $data = $callback($this->get($filesystem, $group, null, 0));
 
         $this->save($group, $data, $filesystem);
 

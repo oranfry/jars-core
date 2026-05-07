@@ -66,7 +66,7 @@ class Chain
 
     public function blockExists(string $version): bool
     {
-        return $version === Jars::INITIAL_VERSION
+        return $version === Jars::ROOT_VERSION
             || array_key_exists($version, $this->blocks)
             || is_file($this->dataFile($version));
     }

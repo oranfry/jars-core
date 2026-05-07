@@ -626,6 +626,7 @@ class Linetype
                         $timestamp,
                         (object) ['id' => $oldchild->id, '_is' => false],
                         $baseBlock,
+                        $newBlock,
                         $discard,
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,

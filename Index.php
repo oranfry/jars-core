@@ -2,6 +2,7 @@
 
 namespace OranFry\Jars\Core;
 
+use OranFry\Jars\Contract\Exception;
 use OranFry\Jars\Contract\StaleLockException;
 
 class Index
@@ -43,7 +44,7 @@ class Index
 
         $file = $this->basePath . '/head';
 
-        return is_file($file) ? file_get_contents($file) : Jars::INITIAL_VERSION;
+        return is_file($file) ? file_get_contents($file) : Jars::ROOT_VERSION;
     }
 
     public function height(): int
@@ -99,17 +100,30 @@ class Index
 
     function addToChain($newBlock, bool $permanent = true): self
     {
-        $newVersion = $newBlock->version();
+        if (
+            $newBlock->height() === $this->height()
+            || $newBlock->version() === $this->head
+        ) {
+            // the work is already done, perhaps by index rebuild
+            return $this;
+        }
+
+        if ($newBlock->height() !== $this->height() + 1) {
+            throw new Exception('Incorrect height of block being added to index');
+        }
+
+        $this->head = $newBlock->version();
+        $this->height = $newBlock->height();
 
         foreach ($newBlock->recordIds() as $id) {
             if ($permanent) {
                 $file = $this->dataFile($id);
 
                 Helper::mkdir(dirname($file), $this->basePath);
-                file_put_contents($file, $newVersion);
+                file_put_contents($file, $this->head);
             }
 
-            $this->recordVersions[$id] = $newVersion;
+            $this->recordVersions[$id] = $this->head;
         }
 
         foreach ($newBlock->linkKeys() as $key) {
@@ -117,21 +131,19 @@ class Index
                 $file = $this->dataFile(...explode('.', $key));
 
                 Helper::mkdir(dirname($file), $this->basePath);
-                file_put_contents($file, $newVersion);
+                file_put_contents($file, $this->head);
             }
 
-            $this->linkVersions[$key] = $newVersion;
+            $this->linkVersions[$key] = $this->head;
         }
 
-        $this->head = $newVersion;
-
         if ($permanent) {
-            file_put_contents($this->basePath . '/head', $newVersion);
-            file_put_contents($this->basePath . '/height', $height = $newBlock->height());
+            file_put_contents($this->basePath . '/head', $this->head);
+            file_put_contents($this->basePath . '/height', $this->height);
         }
 
         if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-            error_log("Added block to index [$newVersion] [$height]");
+            error_log("Added block to index [$this->head] [$this->height]");
         }
 
         return $this;

@@ -2,6 +2,7 @@
 
 namespace OranFry\Jars\Core;
 
+use Closure;
 use OranFry\Jars\Contract\BadTokenException;
 use OranFry\Jars\Contract\BadUsernameOrPasswordException;
 use OranFry\Jars\Contract\ConcurrentModificationException;
@@ -12,7 +13,7 @@ use OranFry\Jars\Contract\Exception;
 
 class Jars implements \OranFry\Jars\Contract\Client
 {
-    const INITIAL_VERSION = '00000096d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
+    const ROOT_VERSION = '00000096d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
 
     const ENCODING_OPTIONS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
 
@@ -151,7 +152,7 @@ class Jars implements \OranFry\Jars\Contract\Client
     {
         $file = $this->db_path('current/version.dat');
 
-        return is_file($file) ? file_get_contents($file) : static::INITIAL_VERSION;
+        return is_file($file) ? file_get_contents($file) : static::ROOT_VERSION;
     }
 
     public static function debug_push(string $activity): void
@@ -335,7 +336,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->linetype($linetype_name)->get_childset($this->token, $id, $property, $lines_cache);
     }
 
-    public function group(string $report_name, string $group = '', string|bool|null $min_version = null)
+    public function group(string $report_name, string $group = '', string|bool|null $min_version = null, ?int $timeout = null)
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -343,25 +344,28 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         $manager = $this->reporter->getManager($report_name);
 
-        $group = $manager->get(
+        return $manager->get(
             new Filesystem(),
             $group,
             $min_version === true ? $this->head : ($min_version ?: null),
+            $timeout ?? ReportManager::DEFAULT_TIMEOUT,
         );
-
-        return $group;
     }
 
-    public function groups(string $report_name, string $prefix = '', string|bool|null $min_version = null): array
+    public function groups(string $report_name, string $prefix = '', string|bool|null $min_version = null, ?int $timeout = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
         $manager = $this->reporter->getManager($report_name);
-        $groups = $manager->groups(new Filesystem(), $prefix, $min_version === true ? $this->head : ($min_version ?: null));
 
-        return $groups;
+        return $manager->groups(
+            new Filesystem(),
+            $prefix,
+            $min_version === true ? $this->head : ($min_version ?: null),
+            $timeout ?? ReportManager::DEFAULT_TIMEOUT,
+        );
     }
 
     public function h2n(string $h, ?int $max = null): ?int
@@ -406,7 +410,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         try {
             $baseBlock = $this
                 ->chain
-                ->getBlock($baseVersion ?? static::INITIAL_VERSION);
+                ->getBlock($baseVersion ?? static::ROOT_VERSION);
 
             $comodified = [];
 
@@ -479,7 +483,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             if (!$dryrun) {
                 $newBlock->save();
 
-                if (Jars::INITIAL_VERSION === $baseBlock->version()) {
+                if (Jars::ROOT_VERSION === $baseBlock->version()) {
                     $baseBlock->mkdir();
                 }
 
@@ -1047,22 +1051,11 @@ class Jars implements \OranFry\Jars\Contract\Client
             $changes = [];
             $relatives = [];
             $metas = [];
-            $stop = false;
 
-            for (
-                $block = $this->chain->getBlock($greyhound)->advance();
-                $block !== null && !$stop;
-                $block = $block->advance()
-            ) {
-                $version = $block->version();
-
-                if ($indexHead === $version) {
-                    $stop = true; // don't allow the loop to go beyond the indexed chain
-                }
-
-                if (self::INITIAL_VERSION === $version = $block->version()) {
+            $this->iterateBlocks($this->chain->getBlock($greyhound)->advance(), function ($block, $version, $isHead, $isRoot) use (&$changes, &$relatives, &$metas) {
+                if ($isRoot) {
                     // intial version does not contain changes; its just a link to first real block
-                    continue;
+                    return;
                 }
 
                 $metas[$version] ??= $block->meta();
@@ -1098,7 +1091,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                     $changes[$id]->sign = $sign;
                 }
-            }
+            });
 
             $lines_cache = [];
             $childsets = [];
@@ -1553,7 +1546,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
     private function version_number_of(string $version): int
     {
-        if ($version === static::INITIAL_VERSION) {
+        if ($version === static::ROOT_VERSION) {
             return 0;
         }
 
@@ -1616,11 +1609,16 @@ class Jars implements \OranFry\Jars\Contract\Client
             ->extendLock(600);
 
         for (
-            $block = new Block($this->chain, self::INITIAL_VERSION);
+            $block = new Block($this->chain, self::ROOT_VERSION);
             $block !== null;
             $block = $block->advance()
         ) {
+            $block->load();
             $this->index->addToChain($block);
+        }
+
+        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+            error_log('Rebuilt index');
         }
 
         return $this;
@@ -1638,5 +1636,45 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this
             ->chain
             ->getBlock($this->index->head());
+    }
+
+    public function getBlock(string $version): Block
+    {
+        return $this->chain->getBlock($version);
+    }
+
+    public function blockExists(string $version): bool
+    {
+        return $this->chain->blockExists($version);
+    }
+
+    public function iterateBlocks(Block $block, ?Closure $callback = null): object
+    {
+        $indexHead = $this->index->head();
+        $count = 0;
+        $initial = $block;
+        $initialVersion = $block->version();
+        $final = null;
+
+        for (
+            $stop = false;
+            $block !== null && !$stop;
+            $block = $block->advance()
+        ) {
+            $count++;
+            $version = $block->version();
+
+            if ($indexHead === $version) {
+                $final = $block;
+                $finalVersion = $version;
+                $stop = true; // don't allow the loop to go beyond the indexed chain
+            }
+
+            if ($callback) {
+                $callback($block, $version, $stop, self::ROOT_VERSION === $version);
+            }
+        }
+
+        return (object) compact('initialVersion', 'count', 'finalVersion', 'initial', 'final');
     }
 }
