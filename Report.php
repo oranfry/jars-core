@@ -1,21 +1,14 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
-use jars\contract\Constants;
-use jars\contract\Exception;
-use jars\contract\VersionTimeoutException;
+use OranFry\Jars\Contract\Constants;
+use OranFry\Jars\Contract\Exception;
+use OranFry\Jars\Contract\VersionTimeoutException;
 
 abstract class Report
 {
-    const DEFAULT_VALUE = [];
-
-    const DEFAULT_TIMEOUT = 100000000;
-
-    const ENCODING_OPTIONS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
-
     // php -r '$_wt = [1, 10, 10, 10, 10, 10, 100, 200, 200, 500]; echo "    const VERSION_WAIT_TRIES = [" . implode(", ", array_map(fn ($try) => $try / array_sum($_wt), $_wt)) . "];\n";'
-    const VERSION_WAIT_TRIES = [0.00095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.095147478591817, 0.19029495718363, 0.19029495718363, 0.47573739295909];
 
     protected $filesystem;
     protected $jars;
@@ -23,19 +16,6 @@ abstract class Report
     public $listen = [];
     public $name;
     public $sorter;
-
-    public function delete(string $group, string $linetype, string $id)
-    {
-        return $this->manip($group, function($report) use ($id, $linetype) {
-            $key = array_search($linetype . '/' . $id, array_map(fn ($line) => $line->type . '/' . $line->id, $report));
-
-            if ($key !== false) {
-                unset($report[$key]);
-            }
-
-            return array_values($report);
-        });
-    }
 
     private function file(string $group): string
     {
@@ -53,41 +33,6 @@ abstract class Report
         }
 
         return $this->filesystem;
-    }
-
-    public function get(string $group, ?string $min_version = null, ?int $timeout_microseconds = null)
-    {
-        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
-            throw new Exception('Invalid group');
-        }
-
-        if ($min_version !== null) {
-            $this->wait_for_version($min_version, $timeout_microseconds);
-        }
-
-        if (!$diskContent = $this->filesystem->get($this->file($group))) {
-            return static::DEFAULT_VALUE;
-        }
-
-        return json_decode($diskContent);
-    }
-
-    public function groups(string $prefix = '', ?string $min_version = null, ?int $timeout_microseconds = null): array
-    {
-        if (!preg_match('/^' . Constants::GROUP_PREFIX_PATTERN . '$/', $prefix)) {
-            throw new Exception('Invalid prefix');
-        }
-
-        if ($min_version !== null) {
-            $this->wait_for_version($min_version, $timeout_microseconds);
-        }
-
-        return json_decode($this->filesystem->get($this->groupsfile($prefix)) ?? '[]');
-    }
-
-    private function groupsfile(string $prefix): string
-    {
-        return $this->file($prefix . 'groups');
     }
 
     public function has(string $group): bool
@@ -151,162 +96,18 @@ abstract class Report
         return $linetypes;
     }
 
-    public function maintain_groups(string $group, bool $exists): void
+    public function listen(): array
     {
-        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
-            throw new Exception('Invalid group');
-        }
+        $keys = array_map(fn ($key, $value): string => is_numeric($key) ? $value : $key, array_keys($this->listen), $this->listen);
 
-        $prefix = in_array($prefix = dirname($group), ['.', '']) ? '' : $prefix . '/';
-        $subgroup = basename($group);
-
-        $this->maintain_groups_r($prefix, $subgroup, $exists);
-    }
-
-    public function maintain_groups_r(string $prefix, string $subgroup, bool $exists): void
-    {
-        if (!preg_match('/^' . Constants::GROUP_PREFIX_PATTERN . '$/', $prefix)) {
-            throw new Exception('Invalid prefix');
-        }
-
-        $groupsfile = $this->groupsfile($prefix);
-        $groups = json_decode($this->filesystem->get($groupsfile) ?? '[]');
-
-        if ($exists) {
-            if (!in_array($subgroup, $groups)) {
-                $groups[] = $subgroup;
-                sort($groups);
-            }
-        } elseif (false !== $key = array_search($subgroup, $groups)) {
-            unset($groups[$key]);
-            $groups = array_values($groups);
-        }
-
-        $export = json_encode($groups, static::ENCODING_OPTIONS);
-
-        if ($exists = $export !== '[]') {
-            $this->filesystem->put($groupsfile, $export);
-        } else {
-            $this->filesystem->delete($groupsfile);
-        }
-
-        $pattern = '/^(' . Constants::GROUP_PREFIX_PATTERN . ')(' . Constants::GROUP_SUB_PATTERN . ')\\/$/';
-
-        if (preg_match($pattern, $prefix, $matches)) {
-            $this->maintain_groups_r($matches[1], $matches[2], $exists);
-        }
-    }
-
-    public function manip(string $group, $callback)
-    {
-        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
-            throw new Exception('Invalid group');
-        }
-
-        $data = $callback($this->get($group));
-
-        $this->save($group, $data);
-
-        return $data;
-    }
-
-    public function save(string $group, $data)
-    {
-        if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
-            throw new Exception('Invalid group');
-        }
-
-        $export = json_encode($data, static::ENCODING_OPTIONS);
-        $reportfile = $this->file($group);
-
-        if ($exists = $export !== json_encode(static::DEFAULT_VALUE, static::ENCODING_OPTIONS)) {
-            $this->filesystem->put($reportfile, $export);
-        } else {
-            $this->filesystem->delete($reportfile);
-        }
-
-        $this->maintain_groups($group, $exists);
-    }
-
-    public function upsert(string $group, object $line, ?callable $sorter = null)
-    {
-        return $this->manip($group, function ($report) use ($line, $sorter) {
-            $key = array_search($line->type . '/' . $line->id, array_map(fn ($line) => $line->type . '/' . $line->id, $report));
-
-            if ($key !== false) {
-                $report[$key] = $line;
-            } else {
-                $report[] = $line;
+        $values = array_map(function ($key, $value): object {
+            if (is_numeric($key)) {
+                return (object) [];
             }
 
-            if ($sorter) {
-                usort($report, $sorter);
-            }
+            return $value;
+        }, array_keys($this->listen), $this->listen);
 
-            return $report;
-        });
-    }
-
-    public function version(&$as_number = null, &$file = null): ?string
-    {
-        if (!$this->filesystem->has($file = $this->version_file())) {
-            $as_number = 0;
-
-            return null;
-        }
-
-        $version = $this->filesystem->get($file);
-        $as_number = (int) $this->filesystem->get($this->jars->version_file($version));
-
-        return $version;
-    }
-
-    public function version_file(): string
-    {
-        return $this->jars->db_path("reports/$this->name/version.dat");
-    }
-
-    private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])
-    {
-        $min_version_file = $this->jars->version_file($min_version);
-
-        if (null === $min_version_raw = $this->filesystem->get($min_version_file)) {
-            $this->filesystem->forget($min_version_file);
-
-            throw new Exception('No such version');
-        }
-
-        $version_file = $this->version_file();
-        $current_version = $feedback['current_version'] = $this->filesystem->get($version_file);
-
-        $this->filesystem->forget($version_file);
-
-        $min_version_num = $feedback['min_version_num'] = (int) $min_version_raw;
-        $current_version_number = $feedback['current_version_number'] = (int) $this->filesystem->get($this->jars->version_file($current_version));
-
-        if ($current_version_number >= $min_version_num) {
-            return true;
-        }
-
-        if ($micro_delay) {
-            usleep($micro_delay);
-        }
-
-        return false;
-    }
-
-    private function wait_for_version(string $min_version, ?int $timeout_microseconds = null): void
-    {
-        if (!preg_match('/^[a-f0-9]{64}$/', $min_version)) {
-            throw new Exception('Invalid minimum version [' . $min_version . ']');
-        }
-
-        foreach (static::VERSION_WAIT_TRIES as $try) {
-            if ($this->version_requirement_met($min_version, (int) ($try * ($timeout_microseconds ?? static::DEFAULT_TIMEOUT)), $feedback)) {
-                return;
-            }
-        }
-
-        throw new VersionTimeoutException("Version timeout waiting for [$min_version]; still at $feedback[current_version]");
+        return array_combine($keys, $values);
     }
 }

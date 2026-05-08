@@ -1,11 +1,11 @@
 {
     "autoload": {
         "psr-4": {
-            "jars\\": ""
+            "OranFry\\Jars\\Core\\": ""
         }
     },
     "name": "oranfry/jars-core",
     "require": {
-        "oranfry/jars-contracts": "^9.0.0"
+        "oranfry/jars-contracts": "dev-chain"
     }
 }

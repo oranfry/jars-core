@@ -1,6 +1,6 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
 use jars\contract\Exception;
 

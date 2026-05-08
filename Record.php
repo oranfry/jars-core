@@ -1,39 +1,37 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
-use jars\contract\Exception;
+use OranFry\Jars\Contract\Exception;
 
-class Record
+class xRecord
 {
     private ?array $data = null;
     private bool $dirty = false;
-    private ?string $extension = 'json';
-    private Jars $jars;
+    private Block $block;
     private ?string $format = 'json';
     private ?string $id = null;
     private string $table;
 
-    public function __construct(Jars $jars, string $table, ?string $id = null)
+    public function __construct(Block $block, string $table, string $id)
     {
-        $this->jars = $jars;
+        $this->block = $block;
 
-        if ($tableinfo = $this->jars->config()->tables()[$table] ?? null) {
-            $this->format = @$tableinfo->format;
-            $this->extension = @$tableinfo->extension;
+        $tableinfo = $this->block->chain()->jars()->config()->tables()[$table] ?? null;
+
+        if ($tableinfo && @$tableinfo->format) {
+            $this->format = $tableinfo->format;
         }
 
         $this->id = $id;
         $this->table = $table;
 
-        if ($this->id === null) {
-            $this->data = [];
-        }
+        $this->block->setRecord($this->table, $this->id, $this);
     }
 
     public function __get(string $property)
     {
-        if ($property == 'id' ) {
+        if ($property === 'id') {
             return $this->id;
         }
 
@@ -66,7 +64,7 @@ class Record
             throw new Exception('Attempt made to save non-scalar data to a record');
         }
 
-        if ($property == 'id') {
+        if ($property === 'id') {
             if (!is_string($value)) {
                 throw new Exception('Attempt made to save non-string id to a record');
             }
@@ -93,8 +91,8 @@ class Record
 
     public function assertExistence()
     {
-        if (!$this->exists()) {
-            throw new Exception("import_r: No such record: {$this->table}/{$this->id}");
+        if (!$this->block->recordExists($this->table, $this->id)) {
+            throw new Exception("No such record: $this->table/$this->id");
         }
     }
 
@@ -140,7 +138,7 @@ class Record
 
     public function exists()
     {
-        return $this->jars->filesystem()->has($this->file());
+        return is_file($this->file());
     }
 
     private function export()
@@ -159,23 +157,32 @@ class Record
     private function file()
     {
         if (!$this->id) {
-            throw new Exception('Could not generate filename');
+            throw new Exception('Could not generate record filename - no id');
         }
 
-        return $this->jars->dataFile(
-            $this->id,
-            'r',
-            $this->table,
-            $this->extension,
-        );
+        return $this->block->path('r.' . $this->table . '.' . $this->id);
+    }
+
+    public function data(?array $data = null): array|null|self
+    {
+        if (func_num_args()) {
+            $this->data = $data;
+
+            return $this;
+        }
+
+        return $this->data;
     }
 
     private function load()
     {
         $this->assertExistence();
 
-        $file = $this->file();
-        $content = $this->jars->filesystem()->get($file);
+        if (!is_file($file = $this->file())) {
+            throw new Exception('Failed to load record from file [' . $file . ']');
+        }
+
+        $content = file_get_contents($file);
 
         if ($this->format == 'binary') {
             $this->data = ['content' => $content];
@@ -188,9 +195,9 @@ class Record
         }
     }
 
-    public static function of(Jars $jars, string $table, ?string $id = null)
+    public static function of(Block $block, string $table, string $id)
     {
-        return new Record($jars, $table, $id);
+        return new Record($block, $table, $id);
     }
 
     public function save()
@@ -203,10 +210,23 @@ class Record
             return;
         }
 
-        $this->jars->filesystem()->put(
-            $this->file(),
-            $this->export(),
-        );
+        // file_put_contents($this->file(), $this->export());
+    }
+
+    public function version(): string
+    {
+        return $this->block->version();
+    }
+
+    public function block(?Block $block = null): self|Block|null
+    {
+        if (func_num_args()) {
+            $this->block = $block;
+
+            return $this;
+        }
+
+        return $this->block;
     }
 
     public function toArray(): array
@@ -216,5 +236,19 @@ class Record
         }
 
         return array_merge(['id' => $this->id], $this->data);
+    }
+
+    public function move(Block $block): self
+    {
+        $this->block = $block->setRecord($table, $id, $this);
+
+        return $this;
+    }
+
+    public function init(): self
+    {
+        $this->data = [];
+
+        return $this;
     }
 }
