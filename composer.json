@@ -6,6 +6,6 @@
     },
     "name": "oranfry/jars-core",
     "require": {
-        "oranfry/jars-contracts": "dev-chain"
+        "oranfry/jars-contracts": "^10.0.0"
     }
 }
