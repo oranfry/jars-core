@@ -15,7 +15,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 {
     const ROOT_VERSION = '00000096d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
 
-    const ENCODING_OPTIONS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
+    const ENCODING_OPTIONS = JSON_UNESCAPED_SLASHES;
 
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
