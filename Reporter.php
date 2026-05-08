@@ -33,7 +33,7 @@ class Reporter
 
     public function dataFile(string $reportName, string $id, ...$suffixes): string
     {
-        return $this->jars->dataFile($this->basePath . '/' . $reportName, $id, ...$suffixes);
+        return $this->jars->dataFile($this->basePath . '/' . $reportName . '/._data', $id, ...$suffixes);
     }
 
     public function getManager(string $report): ReportManager
