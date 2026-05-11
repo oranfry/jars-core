@@ -4,6 +4,7 @@ namespace OranFry\Jars\Core;
 
 use OranFry\Jars\Contract\Exception;
 use OranFry\Jars\Contract\StaleLockException;
+use OranFry\Jars\Contract\Constants;
 
 class Index
 {
@@ -44,7 +45,7 @@ class Index
 
         $file = $this->basePath . '/head';
 
-        return is_file($file) ? file_get_contents($file) : Jars::ROOT_VERSION;
+        return is_file($file) ? file_get_contents($file) : Constants::ROOT_VERSION;
     }
 
     public function height(): int

@@ -2,6 +2,8 @@
 
 namespace OranFry\Jars\Core;
 
+use OranFry\Jars\Contract\Constants;
+
 class Chain
 {
     private string $basePath;
@@ -66,7 +68,7 @@ class Chain
 
     public function blockExists(string $version): bool
     {
-        return $version === Jars::ROOT_VERSION
+        return $version === Constants::ROOT_VERSION
             || array_key_exists($version, $this->blocks)
             || is_file($this->dataFile($version));
     }

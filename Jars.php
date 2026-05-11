@@ -13,8 +13,6 @@ use OranFry\Jars\Contract\Exception;
 
 class Jars implements \OranFry\Jars\Contract\Client
 {
-    const ROOT_VERSION = '00000096d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
-
     const ENCODING_OPTIONS = JSON_UNESCAPED_SLASHES;
 
     private static ?object $debug_node = null;
@@ -152,7 +150,7 @@ class Jars implements \OranFry\Jars\Contract\Client
     {
         $file = $this->db_path('current/version.dat');
 
-        return is_file($file) ? file_get_contents($file) : static::ROOT_VERSION;
+        return is_file($file) ? file_get_contents($file) : Constants::ROOT_VERSION;
     }
 
     public static function debug_push(string $activity): void
@@ -410,7 +408,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         try {
             $baseBlock = $this
                 ->chain
-                ->getBlock($baseVersion ?? static::ROOT_VERSION);
+                ->getBlock($baseVersion ?? Constants::ROOT_VERSION);
 
             $comodified = [];
 
@@ -483,7 +481,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             if (!$dryrun) {
                 $newBlock->save();
 
-                if (Jars::ROOT_VERSION === $baseBlock->version()) {
+                if (Constants::ROOT_VERSION === $baseBlock->version()) {
                     $baseBlock->mkdir();
                 }
 
@@ -1546,7 +1544,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
     private function version_number_of(string $version): int
     {
-        if ($version === static::ROOT_VERSION) {
+        if ($version === Constants::ROOT_VERSION) {
             return 0;
         }
 
@@ -1609,7 +1607,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             ->extendLock(600);
 
         for (
-            $block = new Block($this->chain, self::ROOT_VERSION);
+            $block = new Block($this->chain, Constants::ROOT_VERSION);
             $block !== null;
             $block = $block->advance()
         ) {
@@ -1671,7 +1669,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             }
 
             if ($callback) {
-                $callback($block, $version, $stop, self::ROOT_VERSION === $version);
+                $callback($block, $version, $stop, Constants::ROOT_VERSION === $version);
             }
         }
 

@@ -67,7 +67,7 @@ class ReportManager
             return $this->version = file_get_contents($file);
         }
 
-        return $this->version = Jars::ROOT_VERSION;
+        return $this->version = Constants::ROOT_VERSION;
     }
 
     public function version_file(): string

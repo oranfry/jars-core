@@ -3,6 +3,7 @@
 namespace OranFry\Jars\Core;
 
 use OranFry\Jars\Contract\Exception;
+use OranFry\Jars\Contract\Constants;
 
 class Block
 {
@@ -100,7 +101,7 @@ class Block
     public function previous(?string $previous = null): self|string|null
     {
         if (func_num_args()) {
-            if ($this->version === Jars::ROOT_VERSION) {
+            if ($this->version === Constants::ROOT_VERSION) {
                 throw new Exception("Block: refusing to set a previous block against the initial block");
             }
 
@@ -109,7 +110,7 @@ class Block
             return $this;
         }
 
-        if ($this->version === Jars::ROOT_VERSION) {
+        if ($this->version === Constants::ROOT_VERSION) {
             return null;
         }
 
@@ -133,7 +134,7 @@ class Block
         if (!$this->loaded) {
             $this->assertExistence();
 
-            if ($this->version !== Jars::ROOT_VERSION) {
+            if ($this->version !== Constants::ROOT_VERSION) {
                 if (!is_file($this->path())) {
                     throw new Exception('boom 1');
                 }
@@ -222,7 +223,7 @@ class Block
             return $this;
         }
 
-        if ($this->version === Jars::ROOT_VERSION) {
+        if ($this->version === Constants::ROOT_VERSION) {
             return 0;
         }
 
@@ -244,7 +245,7 @@ class Block
             return $this;
         }
 
-        if ($this->version === Jars::ROOT_VERSION) {
+        if ($this->version === Constants::ROOT_VERSION) {
             return [];
         }
 
@@ -278,7 +279,7 @@ class Block
 
     public function preLock(): void
     {
-        if (Jars::ROOT_VERSION === $this->version) {
+        if (Constants::ROOT_VERSION === $this->version) {
             $this->mkdir();
         }
     }
@@ -296,7 +297,7 @@ class Block
 
     public function pointer(): int
     {
-        if ($this->version === Jars::ROOT_VERSION) {
+        if ($this->version === Constants::ROOT_VERSION) {
             return 0;
         }
 
