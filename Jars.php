@@ -1006,6 +1006,9 @@ class Jars implements \OranFry\Jars\Contract\Client
         // TODO: resolve this major bottleneck!
         // save() and refresh() both locking index, need to reduce contention
 
+        // TODO: can we mark this as a read-only lock? I.e., if the lock gets
+        // stale, we can just remove it without rebuilding the index
+
         $this->index->safeLock(60);
 
         $indexHead = $this->index->head();
