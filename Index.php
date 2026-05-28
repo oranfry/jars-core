@@ -121,7 +121,7 @@ class Index
                 $file = $this->dataFile($id);
 
                 Helper::mkdir(dirname($file), $this->basePath);
-                file_put_contents($file, $this->head);
+                Helper::file_put_contents($file, $this->head);
             }
 
             $this->recordVersions[$id] = $this->head;
@@ -132,15 +132,15 @@ class Index
                 $file = $this->dataFile(...explode('.', $key));
 
                 Helper::mkdir(dirname($file), $this->basePath);
-                file_put_contents($file, $this->head);
+                Helper::file_put_contents($file, $this->head);
             }
 
             $this->linkVersions[$key] = $this->head;
         }
 
         if ($permanent) {
-            file_put_contents($this->basePath . '/head', $this->head);
-            file_put_contents($this->basePath . '/height', $this->height);
+            Helper::file_put_contents($this->basePath . '/head', $this->head);
+            Helper::file_put_contents($this->basePath . '/height', $this->height);
         }
 
         if (defined('JARS_VERBOSE') && JARS_VERBOSE) {

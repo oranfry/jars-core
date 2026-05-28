@@ -28,8 +28,7 @@ class Master
         $file = $this->dataFile($baseVersion);
 
         Helper::mkdir(dirname($file), $this->basePath);
-
-        file_put_contents($file, $newVersion . ' ' . $timestamp . ' ' . $log);
+        Helper::file_put_contents($file, $newVersion . ' ' . $timestamp . ' ' . $log);
 
         return $this;
     }

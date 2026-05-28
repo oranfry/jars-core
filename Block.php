@@ -207,10 +207,10 @@ class Block
         if (!$json) {
             array_walk($this->records, function ($r) { if (isset($r->content)) $r->content = 'something'; });
             var_dump($this->path(), $json, $this->records);
-            throw new Exception('boom 10');
+            throw new Exception('boom 3');
         }
 
-        file_put_contents($this->path(), $json);
+        Helper::file_put_contents($this->path(), $json);
 
         return $this;
     }
