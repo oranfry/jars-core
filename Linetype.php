@@ -884,8 +884,7 @@ class Linetype
 
             if (is_array(@$line->_adopt->{$child->property})) {
                 foreach ($line->_adopt->{$child->property} as $child_id) {
-                    $child_record = Record::of($this->jars, $child_linetype->table, $child_id);
-                    $child_record->assertExistence();
+                    $child_record = $this->jars->getRecord($child_linetype->table, $child_id);
 
                     $this->jars->connect(
                         $child->tablelink,
@@ -898,7 +897,7 @@ class Linetype
 
             if (is_array(@$line->_disown->{$child->property})) {
                 foreach ($line->_disown->{$child->property} as $child_id) {
-                    $child_record = $this->jars->getRecord::of($child_linetype->table, $child_id);
+                    $child_record = $this->jars->getRecord($child_linetype->table, $child_id);
 
                     $this->jars->disconnect(
                         $child->tablelink,

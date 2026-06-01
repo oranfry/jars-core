@@ -180,15 +180,6 @@ class Block
         return $this;
     }
 
-    public function recordExists(string $table, string $id): bool
-    {
-        if (isset($this->records[$id . '.' . $table])) {
-            return true;
-        }
-
-        return Record::of($this, $table, $id)->exists();
-    }
-
     public function save(): self
     {
         $this->mkdir();
