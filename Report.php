@@ -1,10 +1,10 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
-use jars\contract\Constants;
-use jars\contract\Exception;
-use jars\contract\VersionTimeoutException;
+use OranFry\Jars\Contract\Constants;
+use OranFry\Jars\Contract\Exception;
+use OranFry\Jars\Contract\VersionTimeoutException;
 
 abstract class Report
 {

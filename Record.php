@@ -1,8 +1,8 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
-use jars\contract\Exception;
+use OranFry\Jars\Contract\Exception;
 
 class Record
 {

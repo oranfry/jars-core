@@ -1,16 +1,16 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
-use jars\contract\BadTokenException;
-use jars\contract\BadUsernameOrPasswordException;
-use jars\contract\ConcurrentModificationException;
-use jars\contract\Config;
-use jars\contract\ConfigException;
-use jars\contract\Constants;
-use jars\contract\Exception;
+use OranFry\Jars\Contract\BadTokenException;
+use OranFry\Jars\Contract\BadUsernameOrPasswordException;
+use OranFry\Jars\Contract\ConcurrentModificationException;
+use OranFry\Jars\Contract\Config;
+use OranFry\Jars\Contract\ConfigException;
+use OranFry\Jars\Contract\Constants;
+use OranFry\Jars\Contract\Exception;
 
-class Jars implements contract\Client
+class Jars implements \OranFry\Jars\Contract\Client
 {
     private $touch_handle = null;
     private ?Filesystem $filesystem;
@@ -1407,7 +1407,7 @@ class Jars implements contract\Client
             throw new Exception('Invalid event name');
         }
 
-        $eventinterface = 'jars\\events\\' . $event;
+        $eventinterface = 'OranFry\\Jars\\Core\\Events\\' . $event;
 
         if (!interface_exists($eventinterface)) {
             throw new Exception('No such event [' . $event . ']');

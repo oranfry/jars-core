@@ -1,11 +1,11 @@
 <?php
 
-namespace jars;
+namespace OranFry\Jars\Core;
 
 use ReflectionFunction;
 use ReflectionUnionType;
-use jars\contract\Exception;
-use jars\contract\LineValidationException;
+use OranFry\Jars\Contract\Exception;
+use OranFry\Jars\Contract\LineValidationException;
 
 class Linetype
 {
