@@ -131,12 +131,12 @@ class Filesystem
             foreach ($subStore as $file => $details) {
                 if ($details->mode === 'append') {
                     @mkdir(dirname($file), 0777, true);
-                    file_put_contents($file, $details->content, FILE_APPEND);
+                    Helper::file_put_contents($file, $details->content, FILE_APPEND);
                     $details->content = null;
                     $workDone['append']++;
                 } elseif ($details->content !== null) {
                     @mkdir(dirname($file), 0777, true);
-                    file_put_contents($file, $details->content);
+                    Helper::file_put_contents($file, $details->content);
                     $workDone['add']++;
                 } elseif (is_file($file)) {
                     unlink($file);
