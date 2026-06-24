@@ -128,23 +128,33 @@ class Filesystem
         ksort($dirtyByPriority);
 
         foreach ($dirtyByPriority as $priority => $subStore) {
+            $putters = [];
+            $unlink = [];
+
             foreach ($subStore as $file => $details) {
                 if ($details->mode === 'append') {
-                    @mkdir(dirname($file), 0777, true);
-                    Helper::file_put_contents($file, $details->content, FILE_APPEND);
-                    $details->content = null;
+                    $putters[] = (new FilePutter($file, $details->content, FILE_APPEND))->prepare();
                     $workDone['append']++;
                 } elseif ($details->content !== null) {
-                    @mkdir(dirname($file), 0777, true);
-                    Helper::file_put_contents($file, $details->content);
+                    $putters[] = (new FilePutter($file, $details->content))->prepare();
                     $workDone['add']++;
                 } elseif (is_file($file)) {
-                    unlink($file);
+                    $unlink[] = $file;
                     $workDone['delete']++;
                 }
-
-                $details->dirty = false;
             }
+
+            foreach ($putters as $putter) {
+                $putter->execute();
+            }
+
+            foreach ($unlink as $file) {
+                unlink($file);
+            }
+        }
+
+        foreach ($this->store as $file => $details) {
+            $details->dirty = false;
         }
 
         if (defined('JARS_VERBOSE') && JARS_VERBOSE && ($workDone['delete'] + $workDone['add'] + $workDone['append'])) {
