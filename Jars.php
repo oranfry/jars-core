@@ -16,7 +16,7 @@ class Jars implements \OranFry\Jars\Contract\Client
     private ?Filesystem $filesystem;
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
-    private ?string $head = null;
+    private ?int $head = null;
     private ?string $locker_pin = null;
     private ?string $token = null;
     private array $known = [];
@@ -24,8 +24,6 @@ class Jars implements \OranFry\Jars\Contract\Client
     private array $verified_tokens = [];
     private Config $config;
     private string $db_home;
-
-    const INITIAL_VERSION = 'd6711496d746ac3688c7de4ed14988c6ac0af8244b42a6c48298d9fff331c701';
 
     public function __construct(Config $config, string $db_home)
     {
@@ -92,7 +90,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         return array_values($classify); // be forgiving of non-numeric or non-sequential indices
     }
 
-    private function commit(string $timestamp, array $commits, array $meta, array $saves, ?string $base_version): void
+    private function commit(string $timestamp, array $commits, array $meta, ?int $base_version): void
     {
         foreach ($commits as $id => $commit) {
             if (!count(array_diff(array_keys(get_object_vars($commit)), ['id', 'type']))) {
@@ -115,15 +113,13 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         $master_meta_file = $this->masterlog_meta_file();
 
-        $this->head = $this->db_version();
-
-        $version_number = $this->version_number_of($this->head);
+        // $this->head = $this->db_version();
 
         // complain if this would cause concurrent modification
 
         if ($modified_ids && $base_version !== $this->head) {
-            $from = $this->version_number_of($base_version) + 1;
-            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | cut -c66- | sed 's/ /\\n/g'` ?? ''));
+            $from = $base_version + 1;
+            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | sed 's/^[1-9][0-9]* //' | sed 's/ /\\n/g'` ?? ''));
 
             $comodified_ids = array_map(
                 fn ($change) => preg_replace('/.*:/', '', $change),
@@ -138,22 +134,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
         $meta_export = implode(' ', $meta);
 
-        $this->head = hash('sha256', $this->head . $master_export);
+        $this->head = $this->head + 1;
 
         $this->db_version($this->head);
-        $this->filesystem->put($this->version_file($this->head), $version_number + 1);
         $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
         $this->filesystem->append($this->masterlog_file(), $this->head . ' ' . $master_export . "\n");
-
-        foreach ($saves as $save) {
-            if (!$save->record->oldrecord) {
-                $save->record->created_version = $this->head;
-            }
-
-            $save->record->modified_version = $this->head;
-
-            $save->record->save();
-        }
     }
 
     public function config()
@@ -204,17 +189,24 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->db_home . ($path ? '/' . $path : null);
     }
 
-    private function db_version(?string $new = null): string|self
+    private function db_version(?int $new = null): int|self
     {
-        $db_version_file = $this->db_path('version.dat');
-
         if (func_num_args()) {
-            $this->filesystem->put($db_version_file, $new, 200);
+            if ($new === null) {
+                throw new Exception('Cannot set db version to null');
+            }
+
+            $this->filesystem->put($this->db_version_file(), $new, 200);
 
             return $this;
         }
 
-        return $this->filesystem->get($db_version_file) ?? static::INITIAL_VERSION;
+        return $this->filesystem->get($this->db_version_file()) ?? 0;
+    }
+
+    private function db_version_file(): string
+    {
+        return $this->db_path('version.dat');
     }
 
     public static function debug_push(string $activity): void
@@ -279,13 +271,13 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->linetype($linetype_name)->delete($id);
     }
 
-    private function dredge_r(array $lines): array
+    private function dredge_r(array $lines, int $version): array
     {
         $dredged = [];
 
         foreach ($lines as $line) {
             if (@$line->_is !== false) {
-                $_line = $this->linetype($line->type)->get($this->token, $line->id);
+                $_line = $this->linetype($line->type)->get($this->token, $line->id, $version);
             } else {
                 $_line = (object) [
                     '_is' => false,
@@ -296,7 +288,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             foreach (array_keys(get_object_vars($line)) as $key) {
                 if (is_array($line->$key)) {
-                    $_line->$key = $this->dredge_r($line->$key);
+                    $_line->$key = $this->dredge_r($line->$key, $version);
                 }
             }
 
@@ -374,7 +366,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         $this->head = $this->db_version();
 
-        $line = $this->linetype($linetype_name)->get($this->token, $id);
+        $line = $this->linetype($linetype_name)->get($this->token, $id, $this->head);
 
         if (!$line) {
             return null;
@@ -389,31 +381,31 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        return $this->linetype($linetype_name)->get_childset($this->token, $id, $property, $lines_cache);
+        return $this->linetype($linetype_name)->get_childset($this->token, $id, $this->head, $property, $lines_cache);
     }
 
-    public function group(string $report_name, string $group = '', string|bool|null $min_version = null)
+    public function group(string $report_name, string $group = '', int|true|null $min_version = null)
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
         $report = $this->report($report_name);
-        $group = $report->get($group, $min_version === true ? $this->head : ($min_version ?: null));
+        $group = $report->get($group, $min_version === true ? $this->head : $min_version);
 
         $this->head = $report->version();
 
         return $group;
     }
 
-    public function groups(string $report_name, string $prefix = '', string|bool|null $min_version = null): array
+    public function groups(string $report_name, string $prefix = '', int|true|null $min_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
         $report = $this->report($report_name);
-        $groups = $report->groups($prefix, $min_version === true ? $this->head : ($min_version ?: null));
+        $groups = $report->groups($prefix, $min_version === true ? $this->head : $min_version);
 
         $this->head = $report->version();
 
@@ -437,7 +429,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         return null;
     }
 
-    public function import(string $timestamp, array $lines, ?string $base_version = null, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
+    public function import(string $timestamp, array $lines, ?int $base_version = null, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
     {
         $base_version ??= $this->head;
 
@@ -451,6 +443,8 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         // we have the floor!
 
+        $this->head = $this->db_version();
+
         try {
             return $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
         } finally {
@@ -460,7 +454,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
     }
 
-    private function _import(string $timestamp, array $lines, ?string $base_version, bool $dryrun, ?int $logging, bool $differential): array
+    private function _import(string $timestamp, array $lines, ?int $base_version, bool $dryrun, ?int $logging, bool $differential): array
     {
         $affecteds = [];
         $commits = [];
@@ -468,10 +462,23 @@ class Jars implements \OranFry\Jars\Contract\Client
         $original_filesystem->freeze();
 
         static::debug_push('Jars::import_r');
-        $lines = $this->import_r($original_filesystem, $timestamp, $lines, $base_version, $affecteds, $commits, null, $logging, $differential);
+
+        $lines = $this->import_r(
+            $original_filesystem,
+            $timestamp,
+            $lines,
+            $base_version,
+            $affecteds,
+            $commits,
+            null,
+            $logging,
+            $differential,
+        );
+
         static::debug_pop();
 
         static::debug_push('Process affecteds');
+
         foreach ($affecteds as $affected) {
             switch ($affected->action) {
                 case 'connect':
@@ -488,8 +495,12 @@ class Jars implements \OranFry\Jars\Contract\Client
                     break;
 
                 case 'delete':
-                    $affected->oldrecord->delete();
+                    $affected->record = $affected
+                        ->oldrecord
+                        ->delete();
+
                     $meta[] = '-' . $affected->table . ':' . $affected->id;
+                    $saves[] = $affected;
 
                     break;
 
@@ -507,8 +518,8 @@ class Jars implements \OranFry\Jars\Contract\Client
                     break;
 
                 case 'save':
-                    $affected->record->save();
                     $meta[] = ($affected->oldrecord ? '~' : '+') . $affected->table . ':' . $affected->id;
+                    $saves[] = $affected;
 
                     break;
 
@@ -516,31 +527,55 @@ class Jars implements \OranFry\Jars\Contract\Client
                     throw new Exception('Unknown action: ' . @$affected->action);
             }
         }
-        static::debug_pop();
 
-        static::debug_push('Dredge');
-        $updated = $this->dredge_r($lines);
         static::debug_pop();
 
         static::debug_push('Commit activities');
+
+        foreach ($saves as $save) {
+            if (!$save->record->oldrecord) {
+                $save->record->created_version = $this->head;
+            }
+
+            $save->record->modified_version = $this->head;
+
+            $save->record->save($this->head + 1);
+        }
+
         if ($dryrun) {
+            static::debug_push('Dredge');
+
+            $updated = $this->dredge_r($lines, $this->head + 1);
+
+            static::debug_pop();
+
             $this->filesystem->reset();
+
+            return $updated;
         } else {
             $commits = array_filter($commits);
-            $saves = array_filter($affecteds, fn ($affected) => $affected->action === 'save');
 
-            $this->commit($timestamp, $commits, $meta, $saves, $base_version);
+            $this->commit($timestamp, $commits, $meta, $base_version);
         }
+
         static::debug_pop();
 
         static::debug_push('Trigger entryimported');
+
         $this->trigger('entryimported');
+
+        static::debug_pop();
+
+        static::debug_push('Dredge');
+
+        $updated = $this->dredge_r($lines, $this->head);
+
         static::debug_pop();
 
         return $updated;
     }
 
-    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, ?string $base_version, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
+    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, ?int $base_version, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -559,13 +594,35 @@ class Jars implements \OranFry\Jars\Contract\Client
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->import($this->token, $original_filesystem, $timestamp, $line, $base_version, $affecteds, $commits, $ignorelink, $logging, $differential);
+                ->import(
+                    $this->token,
+                    $original_filesystem,
+                    $timestamp,
+                    $line,
+                    $this->head + 1,
+                    $base_version,
+                    $affecteds,
+                    $commits,
+                    $ignorelink,
+                    $logging,
+                    $differential,
+                );
         }
 
         foreach ($lines as $line) {
             $this
                 ->linetype($line->type)
-                ->recurse_to_children($original_filesystem, $timestamp, $line, $base_version, $affecteds, $commits, $ignorelink, $logging, $differential);
+                ->recurse_to_children(
+                    $original_filesystem,
+                    $timestamp,
+                    $line,
+                    $base_version,
+                    $affecteds,
+                    $commits,
+                    $ignorelink,
+                    $logging,
+                    $differential,
+                );
         }
 
         return $lines;
@@ -854,7 +911,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this;
     }
 
-    public function preview(array $lines, ?string $base_version = null): array
+    public function preview(array $lines, ?int $base_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -867,7 +924,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->import(date('Y-m-d H:i:s'), $lines, $base_version, true);
     }
 
-    private function propagate_r(string $table_name, string $id, array &$relatives, array &$changes = [], array &$seen = []): void
+    private function propagate_r(string $table_name, string $id, int $version, array &$relatives, array &$changes = [], array &$seen = []): void
     {
         foreach ($this->find_table_linetypes($table_name) as $linetype) {
             $relationships = array_merge(
@@ -885,7 +942,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $relative_linetype = $this->linetype($relationship->parent_linetype);
                     $table_name = $relative_linetype->table;
 
-                    if (!Record::of($this, $table_name, $relative_id)->exists()) {
+                    if (!Record::of($this, $table_name, $version, $relative_id)->exists()) {
                         continue;
                     }
 
@@ -901,7 +958,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     if (!isset($seen[$key = $table_name . ':' . $relative_id])) {
                         $seen[$key] = true;
 
-                        $this->propagate_r($table_name, $relative_id, $relatives, $changes, $seen);
+                        $this->propagate_r($table_name, $relative_id, $version, $relatives, $changes, $seen);
                     }
                 }
             }
@@ -914,14 +971,10 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        $contents = Record::of($this, $table_name, $id)
+        $this->head = $this->db_version();
+
+        return Record::of($this, $table_name, $this->head, $id)
             ->currentContents();
-
-        if ($contents !== null) {
-            $this->head = $this->db_version();
-        }
-
-        return $contents;
     }
 
     public function refresh(): string
@@ -938,7 +991,6 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         try {
             $bunny = $this->db_version();
-            $bunny_number = $this->version_number_of($bunny);
             $changed_reports = [];
 
             // preload the metas we need
@@ -954,32 +1006,31 @@ class Jars implements \OranFry\Jars\Contract\Client
                     continue;
                 }
 
-                $greyhound = $report->version($greyhound_number) ?? static::INITIAL_VERSION;;
+                $greyhound = $report->version();
 
-                if ($greyhound_number < $from) {
-                    $from = $greyhound_number;
-                    $from_greyhound = $greyhound;
+                if ($greyhound < $from) {
+                    $from = $greyhound;
                 }
             }
 
-            $length = $bunny_number - $from;
+            $length = $bunny - $from;
 
-            if (!$length) {
+            if ($length <= 0) {
                 // nothing to do
 
                 if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                    error_log("Refresh: nothing to do! $from_greyhound ($from) ~ $bunny ($bunny_number) (Δ $length)");
+                    error_log("Refresh: nothing to do! $from ~ $bunny (Δ $length)");
                 }
 
                 return $bunny;
             }
 
             if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                error_log("Refreshing $from_greyhound ($from) ~ $bunny ($bunny_number) (Δ $length)...");
+                error_log("Refreshing $from ~ $bunny (Δ $length)...");
             }
 
             $master_meta_file = $this->db_path('master.dat.meta');
-            $command = "cat '$master_meta_file' | tail -n +" . ($from + 1) . " | head -n $length | cut -c66-";
+            $command = "cat '$master_meta_file' | tail -n +" . ($from + 1) . " | head -n $length | sed 's/^[1-9][0-9]* //'";
             $process = proc_open($command, [1 => ['pipe', 'w']], $pipes);
 
             if (!is_resource($process)) {
@@ -998,21 +1049,21 @@ class Jars implements \OranFry\Jars\Contract\Client
                     continue;
                 }
 
-                $greyhound = $report->version($greyhound_number);
+                $greyhound = $report->version();
 
-                if ($greyhound && $bunny == $greyhound) {
+                if ($greyhound && $bunny === $greyhound) {
                     continue;
                 }
 
                 if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                    error_log("Refreshing report $report_name [$greyhound_number → $bunny_number]");
+                    error_log("Refreshing report $report_name [$greyhound → $bunny]");
                 }
 
                 $changes = [];
                 $relatives = [];
 
-                for ($version_number = $greyhound_number; $version_number <= $bunny_number - 1; $version_number++) {
-                    foreach ($metas[$version_number] as $meta) {
+                for ($version = $greyhound; $version <= $bunny - 1; $version++) {
+                    foreach ($metas[$version] as $meta) {
                         // connection
 
                         if (preg_match('/^>/', $meta)) {
@@ -1052,7 +1103,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                 if ($greyhound) {
                     foreach ($changes as $id => $change) {
-                        $this->propagate_r($change->table, $id, $relatives, $changes);
+                        $this->propagate_r($change->table, $id, $bunny, $relatives, $changes);
                     }
                 }
 
@@ -1164,7 +1215,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $bunny;
     }
 
-    public function refresh_derived(array $changed, string $version, array &$unaffected_reports, array &$cache = []): void
+    public function refresh_derived(array $changed, int $version, array &$unaffected_reports, array &$cache = []): void
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -1338,7 +1389,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $reports;
     }
 
-    public function save(array $lines, ?string $base_version = null): array
+    public function save(array $lines, ?int $base_version = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -1487,7 +1538,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         $line = null;
 
         try {
-            $line = $this->linetype('token')->get(null, $id);
+            $line = $this->linetype('token')->get(null, $id, $this->db_version());
         } catch (\Exception $e) {}
 
         if (
@@ -1506,33 +1557,13 @@ class Jars implements \OranFry\Jars\Contract\Client
         ];
     }
 
-    public function version(): ?string
+    public function version(): ?int
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
         return $this->head;
-    }
-
-    public function version_file(string $version): string
-    {
-        return $this->dataFile($version, 'v');
-    }
-
-    private function version_number_of(string $version): int
-    {
-        if ($version === static::INITIAL_VERSION) {
-            return 0;
-        }
-
-        $file = $this->version_file($version);
-
-        if (null === $number = $this->filesystem->get($file)) {
-            throw new Exception('Could not resolve version [' . $version . '] to a number');
-        }
-
-        return intval($number);
     }
 
     private static function writable(string $file): bool

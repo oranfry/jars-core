@@ -55,7 +55,7 @@ abstract class Report
         return $this->filesystem;
     }
 
-    public function get(string $group, ?string $min_version = null, ?int $timeout_microseconds = null)
+    public function get(string $group, ?int $min_version = null, ?int $timeout_microseconds = null)
     {
         if (!preg_match('/^' . Constants::GROUP_PATTERN . '$/', $group)) {
             throw new Exception('Invalid group');
@@ -72,7 +72,7 @@ abstract class Report
         return json_decode($diskContent);
     }
 
-    public function groups(string $prefix = '', ?string $min_version = null, ?int $timeout_microseconds = null): array
+    public function groups(string $prefix = '', ?int $min_version = null, ?int $timeout_microseconds = null): array
     {
         if (!preg_match('/^' . Constants::GROUP_PREFIX_PATTERN . '$/', $prefix)) {
             throw new Exception('Invalid prefix');
@@ -247,18 +247,9 @@ abstract class Report
         });
     }
 
-    public function version(&$as_number = null, &$file = null): ?string
+    public function version(): int
     {
-        if (!$this->filesystem->has($file = $this->version_file())) {
-            $as_number = 0;
-
-            return null;
-        }
-
-        $version = $this->filesystem->get($file);
-        $as_number = (int) $this->filesystem->get($this->jars->version_file($version));
-
-        return $version;
+        return $this->filesystem->get($this->version_file()) ?? 0;
     }
 
     public function version_file(): string
@@ -266,25 +257,13 @@ abstract class Report
         return $this->jars->db_path("reports/$this->name/version.dat");
     }
 
-    private function version_requirement_met(string $min_version, int $micro_delay = 0, &$feedback = [])
+    private function version_requirement_met(int $min_version, int $micro_delay = 0, ?string &$current_version = null)
     {
-        $min_version_file = $this->jars->version_file($min_version);
-
-        if (null === $min_version_raw = $this->filesystem->get($min_version_file)) {
-            $this->filesystem->forget($min_version_file);
-
-            throw new Exception('No such version');
-        }
-
-        $version_file = $this->version_file();
-        $current_version = $feedback['current_version'] = $this->filesystem->get($version_file);
+        $current_version = $this->filesystem->get($version_file = $this->version_file());
 
         $this->filesystem->forget($version_file);
 
-        $min_version_num = $feedback['min_version_num'] = (int) $min_version_raw;
-        $current_version_number = $feedback['current_version_number'] = (int) $this->filesystem->get($this->jars->version_file($current_version));
-
-        if ($current_version_number >= $min_version_num) {
+        if ($current_version >= $min_version) {
             return true;
         }
 
@@ -295,18 +274,14 @@ abstract class Report
         return false;
     }
 
-    private function wait_for_version(string $min_version, ?int $timeout_microseconds = null): void
+    private function wait_for_version(int $min_version, ?int $timeout_microseconds = null): void
     {
-        if (!preg_match('/^[a-f0-9]{64}$/', $min_version)) {
-            throw new Exception('Invalid minimum version [' . $min_version . ']');
-        }
-
         foreach (static::VERSION_WAIT_TRIES as $try) {
-            if ($this->version_requirement_met($min_version, (int) ($try * ($timeout_microseconds ?? static::DEFAULT_TIMEOUT)), $feedback)) {
+            if ($this->version_requirement_met($min_version, (int) ($try * ($timeout_microseconds ?? static::DEFAULT_TIMEOUT)), $current_version)) {
                 return;
             }
         }
 
-        throw new VersionTimeoutException("Version timeout waiting for [$min_version]; still at $feedback[current_version]");
+        throw new VersionTimeoutException("Version timeout waiting for [$min_version]; still at $current_version");
     }
 }

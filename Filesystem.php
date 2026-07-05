@@ -263,4 +263,39 @@ class Filesystem
 
         return $this;
     }
+
+    public function list(string $dir): array
+    {
+        $files = [];
+
+        if (is_dir($dir)) {
+            $handle = opendir($dir);
+
+            while ($basename = readdir($handle)) {
+                if ($basename !== '.' && $basename !== '..') {
+                    $files[$basename] = true;
+                }
+            }
+        }
+
+        foreach ($this->store as $file => $details) {
+            if (!preg_match('@^' . preg_quote($dir, '@') . '/([^/]+)$@', $file, $matches)) {
+                continue;
+            }
+
+            $basename = $matches[1];
+
+            if ($details->content !== null) {
+                $files[$basename] = true;
+            } elseif (isset($files[$basename])) {
+                unset($files[$basename]);
+            }
+        }
+
+        $files = array_keys($files);
+
+        sort($files);
+
+        return $files;
+    }
 }
