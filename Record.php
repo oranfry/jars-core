@@ -6,6 +6,9 @@ use OranFry\Jars\Contract\Exception;
 
 class Record
 {
+    static array $register = [];
+    static array $proposed = [];
+
     private ?array $data = null;
     private bool $dirty = false;
     private bool $deleted = false;
@@ -181,7 +184,6 @@ class Record
                 throw new Exception('Could not generate filename');
             }
 
-            $bestFile = null;
             $bestVersion = 0;
             $dir = dirname($this->jars->dataFile($this->id));
 
@@ -198,11 +200,9 @@ class Record
 
                 if ($version > $bestVersion) {
                     $bestVersion = $version;
-                    $bestFile = $file;
+                    $this->file = $dir . '/' . $file;
                 }
             }
-
-            $this->file = $dir . '/' . $bestFile;
         }
 
         return $this->file;
@@ -210,7 +210,12 @@ class Record
 
     private function writeFile(): string
     {
-        return $this->jars->dataFile($this->id, 'r', $this->table, $this->version);
+        return self::writeFileOf($this->jars, $this->table, $this->version, $this->id);
+    }
+
+    public function init()
+    {
+        $this->data = [];
     }
 
     private function load()
@@ -231,21 +236,13 @@ class Record
         }
     }
 
-    public static function of(Jars $jars, string $table, int $version, ?string $id = null)
-    {
-        return new Record($jars, $table, $version, $id);
-    }
-
-    public function save(int $version): self
+    public function save(): self
     {
         if ($this->id === null) {
             throw new Exception('Tried to save record without id');
         }
 
         if ($this->dirty) {
-            $this->version = $version;
-            $this->file = null;
-
             $this->jars->filesystem()->put(
                 $this->writeFile(),
                 $this->export(),
@@ -262,5 +259,30 @@ class Record
         }
 
         return array_merge(['id' => $this->id], $this->data);
+    }
+
+    public static function of(Jars $jars, string $table, int $version, ?string $id = null): self
+    {
+        $key = 'existing--' . $table . '--' . $id . '--' . $version;
+
+        return $jars->recordStore($key) ?? $jars->recordStore($key, new self($jars, $table, $version, $id));
+    }
+
+    public static function propose(Jars $jars, string $table, int $version, ?string $id = null)
+    {
+        $key = 'proposed--' . $table . '--' . $id . '--' . $version;
+
+        if ($record = $jars->recordStore($key)) {
+            return $record;
+        }
+
+        @unlink(self::writeFileOf($jars, $table, $version, $id)); // first clean up any previous failed attempts to update this record
+
+        return $jars->recordStore($key, new self($jars, $table, $version, $id));
+    }
+
+    public static function writeFileOf(Jars $jars, string $table, int $version, string $id): string
+    {
+        return $jars->dataFile($id, 'r', $table, $version);
     }
 }

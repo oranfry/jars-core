@@ -13,7 +13,7 @@ use OranFry\Jars\Contract\Exception;
 class Jars implements \OranFry\Jars\Contract\Client
 {
     private $touch_handle = null;
-    private ?Filesystem $filesystem;
+    private Filesystem $filesystem;
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
     private ?int $head = null;
@@ -24,6 +24,11 @@ class Jars implements \OranFry\Jars\Contract\Client
     private array $verified_tokens = [];
     private Config $config;
     private string $db_home;
+
+    private array $recordStore = [];
+    private array $linkStore = [];
+    private array $proposedRecordStore = [];
+    private array $proposedLinkStore = [];
 
     public function __construct(Config $config, string $db_home)
     {
@@ -429,7 +434,14 @@ class Jars implements \OranFry\Jars\Contract\Client
         return null;
     }
 
-    public function import(string $timestamp, array $lines, ?int $base_version = null, bool $dryrun = false, ?int $logging = null, bool $differential = false): array
+    public function import(
+        string $timestamp,
+        array $lines,
+        ?int $base_version = null,
+        bool $dryrun = false,
+        ?int $logging = null,
+        bool $differential = false,
+    ): array
     {
         $base_version ??= $this->head;
 
@@ -458,13 +470,10 @@ class Jars implements \OranFry\Jars\Contract\Client
     {
         $affecteds = [];
         $commits = [];
-        $original_filesystem = clone $this->filesystem;
-        $original_filesystem->freeze();
 
         static::debug_push('Jars::import_r');
 
         $lines = $this->import_r(
-            $original_filesystem,
             $timestamp,
             $lines,
             $base_version,
@@ -482,11 +491,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         foreach ($affecteds as $affected) {
             switch ($affected->action) {
                 case 'connect':
-                    Link::of($this, $affected->tablelink, $affected->left)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->left)
                         ->add($affected->right)
                         ->save();
 
-                    Link::of($this, $affected->tablelink, $affected->right, true)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->right, true)
                         ->add($affected->left)
                         ->save();
 
@@ -495,21 +504,19 @@ class Jars implements \OranFry\Jars\Contract\Client
                     break;
 
                 case 'delete':
-                    $affected->record = $affected
-                        ->oldrecord
-                        ->delete();
+                    $affected->record = Record::propose($this, $affected->table, $this->head + 1, $affected->oldrecord->id);
+                    $affected->record->delete()->save();
 
                     $meta[] = '-' . $affected->table . ':' . $affected->id;
-                    $saves[] = $affected;
 
                     break;
 
                 case 'disconnect':
-                    Link::of($this, $affected->tablelink, $affected->left)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->left)
                         ->remove($affected->right)
                         ->save();
 
-                    Link::of($this, $affected->tablelink, $affected->right, true)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->right, true)
                         ->remove($affected->left)
                         ->save();
 
@@ -518,8 +525,17 @@ class Jars implements \OranFry\Jars\Contract\Client
                     break;
 
                 case 'save':
+                    if (!$affected->oldrecord) {
+                        $affected->record->created = $timestamp;
+                        $affected->record->created_version = $this->head + 1;
+                    }
+
+                    $affected->record->modified = $timestamp;
+                    $affected->record->modified_version = $this->head + 1;
+
+                    $affected->record->save();
+
                     $meta[] = ($affected->oldrecord ? '~' : '+') . $affected->table . ':' . $affected->id;
-                    $saves[] = $affected;
 
                     break;
 
@@ -529,18 +545,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         static::debug_pop();
-
-        static::debug_push('Commit activities');
-
-        foreach ($saves as $save) {
-            if (!$save->record->oldrecord) {
-                $save->record->created_version = $this->head;
-            }
-
-            $save->record->modified_version = $this->head;
-
-            $save->record->save($this->head + 1);
-        }
 
         if ($dryrun) {
             static::debug_push('Dredge');
@@ -552,11 +556,11 @@ class Jars implements \OranFry\Jars\Contract\Client
             $this->filesystem->reset();
 
             return $updated;
-        } else {
-            $commits = array_filter($commits);
-
-            $this->commit($timestamp, $commits, $meta, $base_version);
         }
+
+        static::debug_push('Commit activities');
+
+        $this->commit($timestamp, array_filter($commits), $meta, $base_version);
 
         static::debug_pop();
 
@@ -575,7 +579,16 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $updated;
     }
 
-    public function import_r(Filesystem $original_filesystem, string $timestamp, array $lines, ?int $base_version, array &$affecteds, array &$commits, ?string $ignorelink = null, ?int $logging = null, bool $differential = false): array
+    public function import_r(
+        string $timestamp,
+        array $lines,
+        ?int $base_version,
+        array &$affecteds,
+        array &$commits,
+        ?string $ignorelink = null,
+        ?int $logging = null,
+        bool $differential = false,
+    ): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
@@ -596,10 +609,9 @@ class Jars implements \OranFry\Jars\Contract\Client
                 ->linetype($line->type)
                 ->import(
                     $this->token,
-                    $original_filesystem,
                     $timestamp,
                     $line,
-                    $this->head + 1,
+                    $this->head,
                     $base_version,
                     $affecteds,
                     $commits,
@@ -613,7 +625,6 @@ class Jars implements \OranFry\Jars\Contract\Client
             $this
                 ->linetype($line->type)
                 ->recurse_to_children(
-                    $original_filesystem,
                     $timestamp,
                     $line,
                     $base_version,
@@ -935,7 +946,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             foreach ($relationships as $relationship) {
                 $direction = ($relationship->reverse ?? false) ? 'forth' : 'back';
                 $lost_relatives = $relatives[$relationship->tablelink][$direction][$id] ?? [];
-                $current_relatives = Link::of($this, $relationship->tablelink, $id, !@$relationship->reverse)->relatives();
+                $current_relatives = Link::of($this, $relationship->tablelink, $version, $id, !@$relationship->reverse)->relatives();
                 $_relatives = array_unique(array_merge($lost_relatives, $current_relatives));
 
                 foreach ($_relatives as $relative_id) {
@@ -1569,5 +1580,23 @@ class Jars implements \OranFry\Jars\Contract\Client
     private static function writable(string $file): bool
     {
         return touch($file) && is_writable($file);
+    }
+
+    public function recordStore(string $key, ?Record $record = null): ?Record
+    {
+        if (func_num_args() > 1) {
+            $this->recordStore[$key] = $record;
+        }
+
+        return $this->recordStore[$key] ?? null;
+    }
+
+    public function linkStore(string $key, ?Link $link = null): ?Link
+    {
+        if (func_num_args() > 1) {
+            $this->linkStore[$key] = $link;
+        }
+
+        return $this->linkStore[$key] ?? null;
     }
 }

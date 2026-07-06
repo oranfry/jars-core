@@ -313,7 +313,7 @@ class Linetype
         }
 
         $childset = [];
-        $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
+        $link = Link::of($this->jars, $child->tablelink, $version, $id, @$child->reverse);
 
         if ($child_ids = $link->relatives()) {
             $childlinetype = $this->jars->linetype($child->linetype);
@@ -337,7 +337,6 @@ class Linetype
 
     public function import(
         string $token,
-        Filesystem $original_filesystem,
         $timestamp,
         object $line,
         int $head,
@@ -400,17 +399,14 @@ class Linetype
                 echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
-            $record = $oldrecord ? clone $oldrecord : Record::of($this->jars, $this->table, $head + 1);
+            $record = Record::propose($this->jars, $this->table, $head + 1, $line->id);
 
             if (!$was) {
-                $record->created = $timestamp;
+                $record->init();
             }
 
-            $record->modified = $timestamp;
-            $record->id = $line->id;
-
             $affecteds[] = (object) [
-                'id' => $record->id,
+                'id' => $line->id,
                 'table' => $this->table,
                 'action' => 'save',
                 'record' => $record,
@@ -429,7 +425,7 @@ class Linetype
             }
 
             foreach ($this->find_incoming_links() as $parent) {
-                $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+                $link = Link::of($this->jars, $parent->tablelink, $head, $line->id, !@$parent->reverse);
 
                 foreach ($link->relatives() as $parent_id) {
                     $affecteds[] = (object) [
@@ -446,11 +442,10 @@ class Linetype
             }
 
             foreach ($this->children as $child) {
-                $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
+                $link = Link::of($this->jars, $child->tablelink, $head, $line->id, @$child->reverse);
 
                 if (@$child->cascade_delete) {
                     $this->jars->import_r(
-                        $original_filesystem,
                         $timestamp,
                         array_map(fn ($child_id) => (object) ['type' => $child->linetype, 'id' => $child_id, '_is' => false], $link->relatives()),
                         $base_version,
@@ -530,7 +525,7 @@ class Linetype
                         'right' => (@$parent->reverse ? $line->$alias : $line->id),
                         'tablelink' => $parent->tablelink,
                         'table' => $parent_table,
-                        'record' => Record::of($this->jars, $parent_table, $head + 1, $line->$alias),
+                        'record' => Record::propose($this->jars, $parent_table, $head + 1, $line->$alias),
                         'oldrecord' => Record::of($this->jars, $parent_table, $head, $line->$alias),
                         'oldlinks' => [],
                     ];
@@ -555,7 +550,7 @@ class Linetype
 
             $child_linetype = $this->jars->linetype($child->linetype);
             $oldchild = null;
-            $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $head, $line->id, @$child->reverse);
 
             if ($oldchild_id = $link->firstChild()) {
                 $oldchild = Record::of($this->jars, $child_linetype->table, $head, $oldchild_id);
@@ -581,7 +576,6 @@ class Linetype
                     $discard = [];
 
                     $childlines = $this->jars->import_r(
-                        $original_filesystem,
                         $timestamp,
                         [$childline],
                         $base_version,
@@ -612,7 +606,6 @@ class Linetype
 
                     $child_linetype->import(
                         $token,
-                        $original_filesystem,
                         $timestamp,
                         (object) ['id' => $oldchild->id, '_is' => false],
                         $head,
@@ -711,7 +704,7 @@ class Linetype
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $version, $id, @$child->reverse);
 
             if ($child_ids = $link->relatives()) {
                 $childlinetype = $this->jars->linetype($child->linetype);
@@ -740,7 +733,7 @@ class Linetype
             }
 
             $line->$alias = null;
-            $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+            $link = Link::of($this->jars, $parent->tablelink, $version, $line->id, !@$parent->reverse);
 
             if (!$parent_id = $link->firstChild()) {
                 continue;
@@ -815,7 +808,6 @@ class Linetype
     }
 
     public function recurse_to_children(
-        Filesystem $original_filesystem,
         string $timestamp,
         object $line,
         ?int $base_version,
@@ -846,7 +838,6 @@ class Linetype
                 }
 
                 $childlines = $this->jars->import_r(
-                    $original_filesystem,
                     $timestamp,
                     $childlines,
                     $base_version,
