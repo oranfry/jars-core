@@ -12,12 +12,10 @@ use OranFry\Jars\Contract\Exception;
 
 class Jars implements \OranFry\Jars\Contract\Client
 {
-    private $touch_handle = null;
     private Filesystem $filesystem;
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
     private ?int $head = null;
-    private ?string $locker_pin = null;
     private ?string $token = null;
     private array $known = [];
     private array $listeners = [];
@@ -462,8 +460,8 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        if ($i_lock = !$dryrun && !isset($this->locker_pin)) {
-            $this->lock();
+        if (!$dryrun) {
+            $pin = $this->lock();
         }
 
         // we have the floor!
@@ -472,9 +470,12 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         try {
             return $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
+        } catch (\Exception $e) {
+            $this->filesystem->reset();
+            throw $e;
         } finally {
-            if ($i_lock) {
-                $this->unlock_internal();
+            if (isset($pin)) {
+                $this->lock($pin); // unlock
             }
         }
     }
@@ -806,29 +807,64 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
     }
 
-    public function lock(): false|string
+    private function _lock(string $file, ?string $_pin): self|string|null
     {
-        if ($this->touch_handle) {
-            throw new Exception('Attempt to lock when already locked');
+        static $pin, $handle;
+
+        if (null === $_pin) { // lock
+            if ($handle) {
+                // throw new Exception('Attempt to lock when already locked [' . $file . ']');
+                return null; // locked by a higher-level import
+            }
+
+            @mkdir(dirname($file), 0777, true);
+
+            // TODO: Implement timeout using non-blocking locking in a loop until
+
+            if (!($handle = fopen($file, 'a'))) {
+                throw new Exception('Could not open the touch file');
+            }
+
+            if (!flock($handle, LOCK_EX)) {
+                fclose($handle);
+
+                $handle = null;
+
+                throw new Exception('Could not acquire a lock over the touch file');
+            }
+
+            return $pin = bin2hex(random_bytes(32));
         }
 
-        @mkdir($this->db_home, 0777, true);
+        // unlock
 
-        // TODO: Implement timeout using non-blocking locking in a loop until
-
-        if (!($this->touch_handle = fopen($this->touch_file(), 'a'))) {
-            throw new Exception('Could not open the touch file');
+        if (!$handle) {
+            throw new Exception('Attempt to unlock when not locked [' . $file . ']');
         }
 
-        if (!flock($this->touch_handle, LOCK_EX)) {
-            fclose($this->touch_handle);
-
-            $this->touch_handle = null;
-
-            throw new Exception('Could not acquire a lock over the touch file');
+        if ($pin !== $_pin) {
+            throw new Exception('Incorrect locker PIN provided for unlocking');
         }
 
-        return $this->locker_pin = bin2hex(random_bytes(32));
+        ftruncate($handle, 0);
+        fwrite($handle, microtime(true));
+        fsync($handle);
+        fclose($handle);
+
+        $handle = null;
+        $pin = null;
+
+        return $this;
+    }
+
+    public function lock(?string $_pin = null): self|string|null
+    {
+        return $this->_lock($this->touch_file(), $_pin);
+    }
+
+    public function lockReports(?string $_pin = null): self|string|null
+    {
+        return $this->_lock($this->reports_lock_file(), $_pin);
     }
 
     public function login(?string $username = null, ?string $password = null, bool $one_time = false): ?string
@@ -1025,9 +1061,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        if ($i_lock = !isset($this->locker_pin)) {
-            $this->lock();
-        }
+        $pin = $this->lockReports();
 
         // we have the floor!
 
@@ -1173,7 +1207,6 @@ class Jars implements \OranFry\Jars\Contract\Client
                         }
 
                         $report_affected = true;
-
                         $current_groups = [];
 
                         if (in_array($change->sign, ['+', '~', '*'])) {
@@ -1223,7 +1256,6 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                 if ($report_affected) {
                     $this->filesystem->put($report->version_file(), $bunny, 200); // the greyhound has caught the bunny!
-                    $this->filesystem->persist()->reset();
 
                     unset($unaffected_reports[$report_name]);
                 }
@@ -1233,18 +1265,18 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             $this->refresh_derived(static::array_keys_recursive($changed_reports), $bunny, $unaffected_reports);
 
-            // defer saving latest version of unchanged reports, as it's not likely anyone is waiting for them
+            // bump latest version of unchanged reports too
 
             if ($unaffected_reports) {
                 foreach (array_keys($unaffected_reports) as $report_name) {
                     $this->filesystem->put($this->report($report_name)->version_file(), $bunny, 200);
                 }
-
-                $this->filesystem->persist()->reset();
             }
+
+            $this->filesystem->persist()->reset();
         } finally {
-            if ($i_lock) {
-                $this->unlock_internal(false);
+            if (isset($pin)) {
+                $this->lockReports($pin); // unlock
             }
         }
 
@@ -1416,6 +1448,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $reports;
     }
 
+    private function reports_lock_file(): string
+    {
+        return $this->db_home . '/reports/lock';
+    }
+
     public function save(array $lines, ?int $base_version = null): array
     {
         if (!$this->verify_token($this->token())) {
@@ -1498,34 +1535,6 @@ class Jars implements \OranFry\Jars\Contract\Client
                 $listener->$method(...$arguments);
             }
         }
-    }
-
-    public function unlock(string $locker_pin, bool $do_touch = true): void
-    {
-        if (!$this->touch_handle) {
-            throw new Exception('Attempt to unlock when not locked');
-        }
-
-        if ($this->locker_pin !== $locker_pin) {
-            throw new Exception('Incorrect locker PIN provided for unlocking');
-        }
-
-        $this->filesystem->persist()->reset();
-
-        if ($do_touch) {
-            ftruncate($this->touch_handle, 0);
-            fwrite($this->touch_handle, microtime(true));
-        }
-
-        fclose($this->touch_handle);
-
-        $this->touch_handle = null;
-        $this->locker_pin = null;
-    }
-
-    private function unlock_internal(bool $touch = true): void
-    {
-        $this->unlock($this->locker_pin, $touch);
     }
 
     public static function validate_password(string $password): bool
