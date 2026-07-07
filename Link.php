@@ -25,9 +25,33 @@ class Link
         $this->reverse = $reverse;
     }
 
+    public function add(string $linked_id): self
+    {
+        if ($this->data === null) {
+            $this->load();
+        }
+
+        if (!in_array($linked_id, $this->data)) {
+            $this->data[] = $linked_id;
+            $this->dirty = true;
+        }
+
+        return $this;
+    }
+
+
     public function direction()
     {
         return $this->reverse ? 'back' : 'forth';
+    }
+
+    private function export(): string
+    {
+        if ($this->data === null) {
+            $this->load();
+        }
+
+        return json_encode($this->data, JSON_UNESCAPED_SLASHES);
     }
 
     public function firstChild(): ?string
@@ -39,13 +63,39 @@ class Link
         return $this->data[0] ?? null;
     }
 
-    public function relatives()
+    private function load(): self
     {
-        if ($this->data === null) {
-            $this->load();
+        $file = $this->readFile();
+        $json = $file ? $this->jars->filesystem()->get($file) : '[]';
+
+        $this->data = json_decode($json, true);
+
+        return $this;
+    }
+
+    public function name()
+    {
+        return $this->name;
+    }
+
+    public static function of(Jars $jars, string $name, int $version, string $id, ?bool $reverse = null): self
+    {
+        $key = 'existing--' . $id . '--' . $name . '--' . $version . '--' . ($reverse ? 'back' : 'forth');
+
+        return $jars->linkStore($key) ?? $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse ?? false));
+    }
+
+    public static function propose(Jars $jars, string $name, int $version, string $id, ?bool $reverse = null): self
+    {
+        $key = 'proposed--' . $id . '--' . $name . '--' . $version . '--' . ($reverse ? 'back' : 'forth');
+
+        if ($link = $jars->linkStore($key)) {
+            return $link;
         }
 
-        return $this->data;
+        @unlink(self::writeFileOf($jars, $name, $version, $id, $reverse ?? false)); // first clean up any previous failed attempts to update this record
+
+        return $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse ?? false));
     }
 
     private function readFile(): ?string
@@ -75,33 +125,13 @@ class Link
         return $this->file;
     }
 
-    private function writeFile(): string
-    {
-        return static::writeFileOf($this->jars, $this->name, $this->version, $this->id, $this->reverse);
-    }
-
-    private function load(): self
-    {
-        $file = $this->readFile();
-        $json = $file ? $this->jars->filesystem()->get($file) : '[]';
-
-        $this->data = json_decode($json, true);
-
-        return $this;
-    }
-
-    public function add(string $linked_id): self
+    public function relatives()
     {
         if ($this->data === null) {
             $this->load();
         }
 
-        if (!in_array($linked_id, $this->data)) {
-            $this->data[] = $linked_id;
-            $this->dirty = true;
-        }
-
-        return $this;
+        return $this->data;
     }
 
     public function remove(string $linked_id): self
@@ -133,38 +163,9 @@ class Link
         return $this;
     }
 
-    public function name()
+    private function writeFile(): string
     {
-        return $this->name;
-    }
-
-    private function export(): string
-    {
-        if ($this->data === null) {
-            $this->load();
-        }
-
-        return json_encode($this->data, JSON_UNESCAPED_SLASHES);
-    }
-
-    public static function of(Jars $jars, string $name, int $version, string $id, ?bool $reverse = null): self
-    {
-        $key = 'existing--' . $id . '--' . $name . '--' . $version . '--' . ($reverse ? 'back' : 'forth');
-
-        return $jars->linkStore($key) ?? $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse ?? false));
-    }
-
-    public static function propose(Jars $jars, string $name, int $version, string $id, ?bool $reverse = null): self
-    {
-        $key = 'proposed--' . $id . '--' . $name . '--' . $version . '--' . ($reverse ? 'back' : 'forth');
-
-        if ($link = $jars->linkStore($key)) {
-            return $link;
-        }
-
-        @unlink(self::writeFileOf($jars, $name, $version, $id, $reverse ?? false)); // first clean up any previous failed attempts to update this record
-
-        return $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse ?? false));
+        return static::writeFileOf($this->jars, $this->name, $this->version, $this->id, $this->reverse);
     }
 
     public static function writeFileOf(Jars $jars, string $name, int $version, string $id, bool $reverse): string

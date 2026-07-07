@@ -30,6 +30,11 @@ class Jars implements \OranFry\Jars\Contract\Client
     private array $proposedRecordStore = [];
     private array $proposedLinkStore = [];
 
+    public function __clone()
+    {
+        $this->filesystem = clone $this->filesystem;
+    }
+
     public function __construct(Config $config, string $db_home)
     {
         $this->config = $config;
@@ -39,11 +44,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         if (!($this->config->linetypes()['token'] ?? null)) {
             throw new Exception('Missing token linetype');
         }
-    }
-
-    public function __clone()
-    {
-        $this->filesystem = clone $this->filesystem;
     }
 
     private static function array_keys_recursive(array $array, string $separtor = '/'): array
@@ -1019,7 +1019,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->recordStore[$key] ?? null;
     }
 
-
     public function refresh(): string
     {
         if (!$this->verify_token($this->token())) {
@@ -1379,15 +1378,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         return $this->known['reports'][$name];
-    }
-
-    public function reportDataFile(string $report_name, string $id, ...$types): string
-    {
-        if (!$report_name) {
-            throw new Exception('Report name cannot be empty');
-        }
-
-        return $this->_dataFile("reports/$report_name/.data/", $id, ...$types);
     }
 
     public function reports(): array

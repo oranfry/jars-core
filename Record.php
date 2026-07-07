@@ -57,13 +57,6 @@ class Record
         return $this->data !== null && isset($this->data[$property]);
     }
 
-    public function __unset(string $property)
-    {
-        if ($this->data !== null) {
-            unset($this->data[$property]);
-        }
-    }
-
     public function __set(string $property, $value)
     {
         if (!is_null($value) && !is_scalar($value)) {
@@ -93,6 +86,13 @@ class Record
     public function __toString(): string
     {
         return $this->export();
+    }
+
+    public function __unset(string $property)
+    {
+        if ($this->data !== null) {
+            unset($this->data[$property]);
+        }
     }
 
     public function assertExistence()
@@ -177,6 +177,49 @@ class Record
         return json_encode($this->data, JSON_UNESCAPED_SLASHES);
     }
 
+    public function init()
+    {
+        $this->data = [];
+    }
+
+    private function load()
+    {
+        $this->assertExistence();
+
+        $file = $this->readFile();
+        $content = $this->jars->filesystem()->get($file);
+
+        if ($this->format == 'binary') {
+            $this->data = ['content' => $content];
+        } else {
+            $this->data = json_decode($content, true);
+
+            if (!is_array($this->data)) {
+                throw new Exception('Invalid JSON found in a record file [' . $file . ']');
+            }
+        }
+    }
+
+    public static function of(Jars $jars, string $table, int $version, ?string $id = null): self
+    {
+        $key = 'existing--' . $table . '--' . $id . '--' . $version;
+
+        return $jars->recordStore($key) ?? $jars->recordStore($key, new self($jars, $table, $version, $id));
+    }
+
+    public static function propose(Jars $jars, string $table, int $version, ?string $id = null)
+    {
+        $key = 'proposed--' . $table . '--' . $id . '--' . $version;
+
+        if ($record = $jars->recordStore($key)) {
+            return $record;
+        }
+
+        @unlink(self::writeFileOf($jars, $table, $version, $id)); // first clean up any previous failed attempts to update this record
+
+        return $jars->recordStore($key, new self($jars, $table, $version, $id));
+    }
+
     private function readFile(): ?string
     {
         if (null === $this->file) {
@@ -208,32 +251,13 @@ class Record
         return $this->file;
     }
 
-    private function writeFile(): string
+    public function toArray(): array
     {
-        return self::writeFileOf($this->jars, $this->table, $this->version, $this->id);
-    }
-
-    public function init()
-    {
-        $this->data = [];
-    }
-
-    private function load()
-    {
-        $this->assertExistence();
-
-        $file = $this->readFile();
-        $content = $this->jars->filesystem()->get($file);
-
-        if ($this->format == 'binary') {
-            $this->data = ['content' => $content];
-        } else {
-            $this->data = json_decode($content, true);
-
-            if (!is_array($this->data)) {
-                throw new Exception('Invalid JSON found in a record file [' . $file . ']');
-            }
+        if ($this->data === null) {
+            $this->load();
         }
+
+        return array_merge(['id' => $this->id], $this->data);
     }
 
     public function save(): self
@@ -252,33 +276,9 @@ class Record
         return $this;
     }
 
-    public function toArray(): array
+    private function writeFile(): string
     {
-        if ($this->data === null) {
-            $this->load();
-        }
-
-        return array_merge(['id' => $this->id], $this->data);
-    }
-
-    public static function of(Jars $jars, string $table, int $version, ?string $id = null): self
-    {
-        $key = 'existing--' . $table . '--' . $id . '--' . $version;
-
-        return $jars->recordStore($key) ?? $jars->recordStore($key, new self($jars, $table, $version, $id));
-    }
-
-    public static function propose(Jars $jars, string $table, int $version, ?string $id = null)
-    {
-        $key = 'proposed--' . $table . '--' . $id . '--' . $version;
-
-        if ($record = $jars->recordStore($key)) {
-            return $record;
-        }
-
-        @unlink(self::writeFileOf($jars, $table, $version, $id)); // first clean up any previous failed attempts to update this record
-
-        return $jars->recordStore($key, new self($jars, $table, $version, $id));
+        return self::writeFileOf($this->jars, $this->table, $this->version, $this->id);
     }
 
     public static function writeFileOf(Jars $jars, string $table, int $version, string $id): string
