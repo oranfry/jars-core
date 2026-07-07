@@ -95,6 +95,19 @@ class Jars implements \OranFry\Jars\Contract\Client
         return array_values($classify); // be forgiving of non-numeric or non-sequential indices
     }
 
+    public static function classify(object $line, object $listen, Report $report): array
+    {
+        if (property_exists($listen, 'classify') && $listen->classify) {
+            return static::classifier_value($listen->classify, $line);
+        }
+
+        if (property_exists($report, 'classify') && $report->classify) {
+            return static::classifier_value($report->classify, $line);
+        }
+
+        return [''];
+    }
+
     private function commit(string $timestamp, array $commits, array $meta, ?int $base_version): void
     {
         foreach ($commits as $id => $commit) {
@@ -715,6 +728,15 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $linetypes;
     }
 
+    public function linkStore(string $key, ?Link $link = null): ?Link
+    {
+        if (func_num_args() > 1) {
+            $this->linkStore[$key] = $link;
+        }
+
+        return $this->linkStore[$key] ?? null;
+    }
+
     public function listen(Listener $listener): void
     {
         $this->listeners[] = $listener;
@@ -988,6 +1010,16 @@ class Jars implements \OranFry\Jars\Contract\Client
             ->currentContents();
     }
 
+    public function recordStore(string $key, ?Record $record = null): ?Record
+    {
+        if (func_num_args() > 1) {
+            $this->recordStore[$key] = $record;
+        }
+
+        return $this->recordStore[$key] ?? null;
+    }
+
+
     public function refresh(): string
     {
         if (!$this->verify_token($this->token())) {
@@ -1103,7 +1135,13 @@ class Jars implements \OranFry\Jars\Contract\Client
                             ];
                         }
 
-                        $changes[$id]->sign = $sign;
+                        if (@$changes[$id]->sign === '+' && $sign === '-') {
+                            // added and deleted; line has no effect
+                            unset($changes[$id]);
+                        } elseif (!isset($changes[$id]->sign) || $changes[$id]->sign !== '+' || $sign !== '~') {
+                            // update sign, except plus to updated
+                            $changes[$id]->sign = $sign;
+                        }
                     }
                 }
 
@@ -1138,7 +1176,6 @@ class Jars implements \OranFry\Jars\Contract\Client
                         $report_affected = true;
 
                         $current_groups = [];
-                        $past_groups = [];
 
                         if (in_array($change->sign, ['+', '~', '*'])) {
                             if (!isset($lines_cache[$linetype_name])) {
@@ -1154,22 +1191,17 @@ class Jars implements \OranFry\Jars\Contract\Client
                             $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
 
                             try {
-                                if (property_exists($listen, 'classify') && $listen->classify) {
-                                    $current_groups = static::classifier_value($listen->classify, $line);
-                                } elseif (property_exists($report, 'classify') && $report->classify) {
-                                    $current_groups = static::classifier_value($report->classify, $line);
-                                } else {
-                                    $current_groups = [''];
-                                }
+                                $current_groups = static::classify($line, $listen, $report);
                             } catch (Exception $e) {
                                 throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
                             }
                         }
 
-                        $groups_file = $this->reportDataFile($report_name, $id, $linetype_name);
+                        $past_groups = [];
 
                         if (in_array($change->sign, ['-', '~', '*'])) {
-                            $past_groups = json_decode($this->filesystem->get($groups_file) ?? '[]');
+                            $oldline = $this->linetype($linetype_name)->get($this->token, $id, $greyhound);
+                            $past_groups = static::classify($oldline, $listen, $report);
                         }
 
                         // remove
@@ -1182,12 +1214,6 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                         foreach ($current_groups as $group) {
                             $report->upsert($group, $line, @$report->sorter);
-                        }
-
-                        if ($current_groups) {
-                            $this->filesystem->put($groups_file, json_encode($current_groups, JSON_UNESCAPED_SLASHES));
-                        } elseif ($this->filesystem->has($groups_file)) {
-                            $this->filesystem->delete($groups_file);
                         }
 
                         foreach (array_merge($past_groups, $current_groups) as $group) {
@@ -1580,23 +1606,5 @@ class Jars implements \OranFry\Jars\Contract\Client
     private static function writable(string $file): bool
     {
         return touch($file) && is_writable($file);
-    }
-
-    public function recordStore(string $key, ?Record $record = null): ?Record
-    {
-        if (func_num_args() > 1) {
-            $this->recordStore[$key] = $record;
-        }
-
-        return $this->recordStore[$key] ?? null;
-    }
-
-    public function linkStore(string $key, ?Link $link = null): ?Link
-    {
-        if (func_num_args() > 1) {
-            $this->linkStore[$key] = $link;
-        }
-
-        return $this->linkStore[$key] ?? null;
     }
 }
