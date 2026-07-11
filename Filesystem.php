@@ -6,14 +6,8 @@ use OranFry\Jars\Contract\Exception;
 
 class Filesystem
 {
-    public const NO_PERSIST = 1 << 0;
-    public const READ_ONLY = 1 << 1;
-    public const AUTO_PERSIST = 1 << 2;
-
-    private bool $auto_persist;
-    private bool $no_persist;
-    private bool $read_only;
     private array $store = [];
+    private string $tmpDir;
 
     public function __clone()
     {
@@ -26,55 +20,19 @@ class Filesystem
         $this->store = $store;
     }
 
-    public function __construct(int $options = 0)
+    public function __construct(string $tmpDir)
     {
-        $this->auto_persist = (bool) ($options & static::AUTO_PERSIST);
-        $this->no_persist = (bool) ($options & static::NO_PERSIST);
-        $this->read_only = (bool) ($options & static::READ_ONLY);
+        $this->tmpDir = $tmpDir;
     }
 
     public function __destruct()
     {
-        if ($this->auto_persist)  {
-            $this->persist();
-        } elseif (!$this->read_only) {
-            foreach ($this->store as $file => $details) {
-                if ($details->dirty) {
-                    error_log(spl_object_id($this) .  ' Lossy filesystem destruction: ' . $file);
-                }
+
+        foreach ($this->store as $file => $details) {
+            if ($details->dirty) {
+                error_log(spl_object_id($this) .  ' Lossy filesystem destruction: ' . $file);
             }
         }
-    }
-
-    public function append(string $file, $content, ?int $priority = null)
-    {
-        if ($this->read_only) {
-            throw new Exception('Attempt made to modify read-only filesystem');
-        }
-
-        if (!$this->cached($file)) {
-            $this->store[$file] = (object) [
-                'content' => null,
-                'dirty' => false,
-                'mode' => 'append',
-            ];
-        } elseif ($this->store[$file]->mode !== 'append') {
-            $this->switch_mode($file);
-        }
-
-        if (
-            $priority !== null
-            || @$this->store[$file]->priority === null
-        ) {
-            $this->store[$file]->priority = $priority ?? 100;
-        }
-
-        if ($content === null) {
-            return;
-        }
-
-        $this->store[$file]->content .= $content;
-        $this->store[$file]->dirty = true;
     }
 
     public function cached(string $file)
@@ -84,13 +42,8 @@ class Filesystem
 
     public function delete(string $file, int $priority = 100)
     {
-        if ($this->read_only) {
-            throw new Exception('Attempt made to modify read-only filesystem');
-        }
-
         $this->store[$file] = (object) [
             'content' => null,
-            'mode' => 'overwrite',
             'dirty' => true,
             'priority' => $priority,
         ];
@@ -109,8 +62,6 @@ class Filesystem
     {
         if (!$this->cached($file)) {
             $this->load($file, $default);
-        } elseif ($this->store[$file]->mode === 'append') {
-            $this->switch_mode($file);
         }
 
         return $this->store[$file]->content;
@@ -119,16 +70,7 @@ class Filesystem
     public function has(string $file)
     {
         if ($this->cached($file)) {
-            switch ($this->store[$file]->mode) {
-                case 'append':
-                    if ($this->store[$file]->dirty) {
-                        return true;
-                    }
-
-                    break;
-                default:
-                    return $this->store[$file]->content !== null;
-            }
+            return $this->store[$file]->content !== null;
         }
 
         return is_file($file);
@@ -180,18 +122,13 @@ class Filesystem
         $this->store[$file] = (object) [
             'content' => $content,
             'dirty' => false,
-            'mode' => 'overwrite',
         ];
     }
 
     public function persist(): self
     {
-        if ($this->no_persist) {
-            throw new Exception('Attempt made to persist to no-persist filesystem');
-        }
-
         $dirtyByPriority = [];
-        $workDone = ['add' => 0, 'delete' => 0, 'append' => 0];
+        $workDone = ['add' => 0, 'delete' => 0];
 
         foreach ($this->store as $file => $details) {
             if (!$details->dirty) {
@@ -208,11 +145,8 @@ class Filesystem
             $unlink = [];
 
             foreach ($subStore as $file => $details) {
-                if ($details->mode === 'append') {
-                    $putters[] = (new FilePutter($file, $details->content, FILE_APPEND))->prepare();
-                    $workDone['append']++;
-                } elseif ($details->content !== null) {
-                    $putters[] = (new FilePutter($file, $details->content))->prepare();
+                if ($details->content !== null) {
+                    $putters[] = (new FilePutter($file, $details->content, $this->tmpDir))->prepare();
                     $workDone['add']++;
                 } elseif (is_file($file)) {
                     $unlink[] = $file;
@@ -233,9 +167,9 @@ class Filesystem
             $details->dirty = false;
         }
 
-        if (defined('JARS_VERBOSE') && JARS_VERBOSE && ($workDone['delete'] + $workDone['add'] + $workDone['append'])) {
+        if (defined('JARS_VERBOSE') && JARS_VERBOSE && ($workDone['delete'] + $workDone['add'])) {
             $message = "Persisted changes to filesystem ";
-            $message .= implode(' ', array_map(fn ($action) => match ($action) { 'add' => '+', 'append' => '.', 'delete' => '-' } . $workDone[$action] , array_keys(array_filter($workDone))));
+            $message .= implode(' ', array_map(fn ($action) => match ($action) { 'add' => '+', 'delete' => '-' } . $workDone[$action] , array_keys(array_filter($workDone))));
 
             error_log($message);
         }
@@ -245,12 +179,7 @@ class Filesystem
 
     public function put(string $file, $content, int $priority = 100)
     {
-        if ($this->read_only) {
-            throw new Exception('Attempt made to modify read-only filesystem');
-        }
-
         $this->store[$file] = (object) [
-            'mode' => 'overwrite',
             'content' => $content,
             'dirty' => true,
             'priority' => $priority,
@@ -267,18 +196,6 @@ class Filesystem
     public function revert(string $file): self
     {
         unset($this->store[$file]);
-
-        return $this;
-    }
-
-    private function switch_mode(string $file): self
-    {
-        if (null === $appendage = $this->store[$file]->content) {
-            return $this->revert($file);
-        }
-
-        $this->load($file);
-        $this->store[$file]->content .= $appendage;
 
         return $this;
     }

@@ -37,7 +37,7 @@ class Jars implements \OranFry\Jars\Contract\Client
     {
         $this->config = $config;
         $this->db_home = $db_home;
-        $this->filesystem = new Filesystem();
+        $this->filesystem = new Filesystem($this->db_path('tmp'));
 
         if (!($this->config->linetypes()['token'] ?? null)) {
             throw new Exception('Missing token linetype');
@@ -134,8 +134,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         // complain if this would cause concurrent modification
 
         if ($modified_ids && $base_version !== $this->head) {
-            $from = $base_version + 1;
-            $comparison_metas = explode("\n", trim(`cat '$master_meta_file' | tail -n +$from | sed 's/^[1-9][0-9]* //' | sed 's/ /\\n/g'` ?? ''));
+            $comparison_metas = [];
+
+            for ($_version = $base_version; $_version < $this->head; $_version++) {
+                $comparison_metas[] = $this->getMeta($_version + 1);
+            }
 
             $comodified_ids = array_map(
                 fn ($change) => preg_replace('/.*:/', '', $change),
@@ -147,14 +150,11 @@ class Jars implements \OranFry\Jars\Contract\Client
             }
         }
 
-        $master_export = $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES);
-        $meta_export = implode(' ', $meta);
-
         $this->head = $this->head + 1;
 
-        $this->db_version($this->head);
-        $this->filesystem->append($master_meta_file, $this->head . ' ' . $meta_export . "\n");
-        $this->filesystem->append($this->masterlog_file(), $this->head . ' ' . $master_export . "\n");
+        $this->filesystem->put($this->metaFile($this->head), implode(' ', $meta) . "\n");
+        $this->filesystem->put($this->masterFile($this->head), $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES) . "\n");
+        $this->filesystem->put($this->db_version_file(), $this->head, 200);
     }
 
     public function config()
@@ -205,18 +205,8 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->db_home . ($path ? '/' . $path : null);
     }
 
-    private function db_version(?int $new = null): int|self
+    private function db_version(): int
     {
-        if (func_num_args()) {
-            if ($new === null) {
-                throw new Exception('Cannot set db version to null');
-            }
-
-            $this->filesystem->put($this->db_version_file(), $new, 200);
-
-            return $this;
-        }
-
         return $this->filesystem->get($this->db_version_file()) ?? 0;
     }
 
@@ -398,6 +388,14 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         return $this->linetype($linetype_name)->get_childset($this->token, $id, $this->head, $property, $lines_cache);
+    }
+
+    private function getMeta(int $version): string
+    {
+        if (!$meta = $this->filesystem->get($this->metaFile($version))) {
+            throw new Exception("No meta for version $version");
+        }
+        return rtrim($this->filesystem->get($this->metaFile($version)), "\n");
     }
 
     public function group(string $report_name, string $group = '', int|true|null $min_version = null)
@@ -924,6 +922,16 @@ class Jars implements \OranFry\Jars\Contract\Client
         return property_exists($token = reset($lines), '_is') && $token->_is === false;
     }
 
+    private function masterFile(int $version): string
+    {
+        return $this->db_path(implode('/', [
+            'master',
+            sprintf("%04x", ($version >> 16)),
+            sprintf("%02x", ($version >> 8) & 255),
+            sprintf("%02x", $version),
+        ]));
+    }
+
     public function masterlog_check(): void
     {
         if (!$this->verify_token($this->token())) {
@@ -955,6 +963,14 @@ class Jars implements \OranFry\Jars\Contract\Client
             ',',
             preg_replace('/.*:/', '', $change),
         ), $meta)));
+    }
+
+    private function metaFile(int $version): string
+    {
+        return $this->dataFile(
+            hash('sha256', 'version-meta-' . $version),
+            'meta',
+        );
     }
 
     public function n2h(int $n): string
@@ -1071,54 +1087,14 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             // preload the metas we need
 
-            $from = INF;
             $all_reports = array_keys($this->config->reports());
             $unaffected_reports = array_flip($all_reports);
-
-            foreach ($all_reports as $report_name) {
-                $report = $this->report($report_name);
-
-                if ($report->is_fully_derived()) {
-                    continue;
-                }
-
-                $greyhound = $report->version();
-
-                if ($greyhound < $from) {
-                    $from = $greyhound;
-                }
-            }
-
-            $length = $bunny - $from;
-
-            if ($length <= 0) {
-                // nothing to do
-
-                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                    error_log("Refresh: nothing to do! $from ~ $bunny (Δ $length)");
-                }
-
-                return $bunny;
-            }
 
             if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
                 error_log("Refreshing $from ~ $bunny (Δ $length)...");
             }
 
-            $master_meta_file = $this->db_path('master.dat.meta');
-            $command = "cat '$master_meta_file' | tail -n +" . ($from + 1) . " | head -n $length | sed 's/^[1-9][0-9]* //'";
-            $process = proc_open($command, [1 => ['pipe', 'w']], $pipes);
-
-            if (!is_resource($process)) {
-                throw new Exception('Problem reading master log meta file');
-            }
-
-            $metas = array_map(fn () => explode(' ', rtrim(fgets($pipes[1]), "\n")), array_fill($from, $length, null));
-
-            fclose($pipes[1]);
-            proc_close($process);
-
-            foreach (array_keys($this->config->reports()) as $report_name) {
+            foreach ($all_reports as $report_name) {
                 $report = $this->report($report_name);
 
                 if ($report->is_fully_derived()) {
@@ -1139,7 +1115,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                 $relatives = [];
 
                 for ($version = $greyhound; $version <= $bunny - 1; $version++) {
-                    foreach ($metas[$version] as $meta) {
+                    foreach (explode(' ', $this->getMeta($version + 1)) as $meta) {
                         // connection
 
                         if (preg_match('/^>/', $meta)) {
