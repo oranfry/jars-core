@@ -1348,7 +1348,6 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             if ($report_affected) {
                 $this->filesystem->put($derived_report->version_file(), $version, 200); // the greyhound has caught the bunny!
-                $this->filesystem->persist()->reset();
 
                 unset($unaffected_reports[$derived_reportname]);
             }
@@ -1442,6 +1441,12 @@ class Jars implements \OranFry\Jars\Contract\Client
         static::debug_push('Jars::import');
 
         $result = $this->import(date('Y-m-d H:i:s'), $lines, $base_version);
+
+        static::debug_pop();
+
+        static::debug_push('Jars::persist');
+
+        $this->persist();
 
         static::debug_pop();
 
