@@ -4,19 +4,18 @@ namespace OranFry\Jars\Core;
 
 class FilePutter
 {
-    const TMP_DIR = '/tmp/file_putter';
-
-    private string $mode;
     private string $tempfile;
     private string $filename;
     private ?string $data;
+    private string $tmpDir;
 
-    public function __construct(string $filename, ?string $data, int $flags = 0)
+    public function __construct(string $filename, ?string $data, string $tmpDir)
     {
         $this->filename = $filename;
         $this->data = $data;
-        $this->mode = $flags & FILE_APPEND ? 'a' : 'w';
-        $this->tempfile = self::TMP_DIR . '/' . bin2hex(random_bytes(8));
+        $this->tmpDir = $tmpDir;
+
+        $this->tempfile = $this->tmpDir . '/' . bin2hex(random_bytes(8));
     }
 
     public function execute(): self
@@ -30,7 +29,7 @@ class FilePutter
 
     public function prepare(): self
     {
-        if (!is_dir(self::TMP_DIR) && !mkdir(self::TMP_DIR, 0777, true)) {
+        if (!is_dir($this->tmpDir) && !mkdir($this->tmpDir, 0777, true)) {
             throw new Exception($this->generateErrorMessage('mkdir tmp'));
         }
 
@@ -40,11 +39,7 @@ class FilePutter
             throw new Exception($this->generateErrorMessage('mkdir'));
         }
 
-        if ($this->mode === 'a' && is_file($this->filename) && !copy($this->filename, $this->tempfile)) {
-            throw new Exception($this->generateErrorMessage('copy'));
-        }
-
-        if (!$handle = fopen($this->tempfile, $this->mode)) {
+        if (!$handle = fopen($this->tempfile, 'w')) {
             throw new Exception($this->generateErrorMessage('fopen'));
         }
 

@@ -6,25 +6,29 @@ use OranFry\Jars\Contract\Exception;
 
 class Record
 {
+    static array $register = [];
+    static array $proposed = [];
+
     private ?array $data = null;
     private bool $dirty = false;
-    private ?string $extension = 'json';
-    private Jars $jars;
+    private bool $deleted = false;
+    private ?string $file = null;
     private ?string $format = 'json';
     private ?string $id = null;
+    private Jars $jars;
     private string $table;
+    private int $version;
 
-    public function __construct(Jars $jars, string $table, ?string $id = null)
+    public function __construct(Jars $jars, string $table, int $version, ?string $id)
     {
         $this->jars = $jars;
-
-        if ($tableinfo = $this->jars->config()->tables()[$table] ?? null) {
-            $this->format = @$tableinfo->format;
-            $this->extension = @$tableinfo->extension;
-        }
-
-        $this->id = $id;
         $this->table = $table;
+        $this->version = $version;
+        $this->id = $id;
+
+        if ($tableinfo = $this->jars->config()->tables()[$this->table] ?? null) {
+            $this->format = @$tableinfo->format;
+        }
 
         if ($this->id === null) {
             $this->data = [];
@@ -51,13 +55,6 @@ class Record
     public function __isset(string $property)
     {
         return $this->data !== null && isset($this->data[$property]);
-    }
-
-    public function __unset(string $property)
-    {
-        if ($this->data !== null) {
-            unset($this->data[$property]);
-        }
     }
 
     public function __set(string $property, $value)
@@ -91,6 +88,13 @@ class Record
         return $this->export();
     }
 
+    public function __unset(string $property)
+    {
+        if ($this->data !== null) {
+            unset($this->data[$property]);
+        }
+    }
+
     public function assertExistence()
     {
         if (!$this->exists()) {
@@ -100,7 +104,7 @@ class Record
 
     public function currentContents(): ?string
     {
-        if (!is_file($file = $this->file())) {
+        if (!is_file($file = $this->readFile())) {
             return null;
         }
 
@@ -111,9 +115,14 @@ class Record
         return $contents;
     }
 
-    public function delete()
+    public function delete(): self
     {
-        $this->jars->filesystem()->delete($this->file());
+        if (!$this->deleted) {
+            $this->deleted = true;
+            $this->dirty = true;
+        }
+
+        return $this;
     }
 
     public function equals(self $another)
@@ -138,15 +147,27 @@ class Record
         return true;
     }
 
-    public function exists()
+    public function exists(): bool
     {
-        return $this->jars->filesystem()->has($this->file());
+        if (!$file = $this->readFile()) {
+            return false;
+        }
+
+        if (null === $contents = $this->jars->filesystem()->get($file)) {
+            return false;
+        }
+
+        return $contents !== json_encode(false);
     }
 
     private function export()
     {
         if ($this->data === null) {
             $this->load();
+        }
+
+        if ($this->deleted) {
+            return json_encode(false);
         }
 
         if ($this->format == 'binary') {
@@ -156,25 +177,16 @@ class Record
         return json_encode($this->data, JSON_UNESCAPED_SLASHES);
     }
 
-    private function file()
+    public function init()
     {
-        if (!$this->id) {
-            throw new Exception('Could not generate filename');
-        }
-
-        return $this->jars->dataFile(
-            $this->id,
-            'r',
-            $this->table,
-            $this->extension,
-        );
+        $this->data = [];
     }
 
     private function load()
     {
         $this->assertExistence();
 
-        $file = $this->file();
+        $file = $this->readFile();
         $content = $this->jars->filesystem()->get($file);
 
         if ($this->format == 'binary') {
@@ -188,25 +200,55 @@ class Record
         }
     }
 
-    public static function of(Jars $jars, string $table, ?string $id = null)
+    public static function of(Jars $jars, string $table, int $version, ?string $id = null): self
     {
-        return new Record($jars, $table, $id);
+        $key = 'existing--' . $table . '--' . $id . '--' . $version;
+
+        return $jars->recordStore($key) ?? $jars->recordStore($key, new self($jars, $table, $version, $id));
     }
 
-    public function save()
+    public static function propose(Jars $jars, string $table, int $version, ?string $id = null)
     {
-        if ($this->id === null) {
-            throw new Exception('Tried to save record without id');
+        $key = 'proposed--' . $table . '--' . $id . '--' . $version;
+
+        if ($record = $jars->recordStore($key)) {
+            return $record;
         }
 
-        if ($this->data === null || !$this->dirty) {
-            return;
+        @unlink(self::writeFileOf($jars, $table, $version, $id)); // first clean up any previous failed attempts to update this record
+
+        return $jars->recordStore($key, new self($jars, $table, $version, $id));
+    }
+
+    private function readFile(): ?string
+    {
+        if (null === $this->file) {
+            if (!$this->id) {
+                throw new Exception('Could not generate filename');
+            }
+
+            $bestVersion = 0;
+            $dir = dirname($this->jars->dataFile($this->id));
+
+            foreach ($this->jars->filesystem()->list($dir) as $file) {
+                if (!preg_match('/^' . $this->id . '\.r\.' . $this->table . '\.([0-9]+)$/', $file, $matches)) {
+                    continue;
+                }
+
+                $version = intval($matches[1]);
+
+                if ($version > $this->version) {
+                    continue;
+                }
+
+                if ($version > $bestVersion) {
+                    $bestVersion = $version;
+                    $this->file = $dir . '/' . $file;
+                }
+            }
         }
 
-        $this->jars->filesystem()->put(
-            $this->file(),
-            $this->export(),
-        );
+        return $this->file;
     }
 
     public function toArray(): array
@@ -216,5 +258,31 @@ class Record
         }
 
         return array_merge(['id' => $this->id], $this->data);
+    }
+
+    public function save(): self
+    {
+        if ($this->id === null) {
+            throw new Exception('Tried to save record without id');
+        }
+
+        if ($this->dirty) {
+            $this->jars->filesystem()->put(
+                $this->writeFile(),
+                $this->export(),
+            );
+        }
+
+        return $this;
+    }
+
+    private function writeFile(): string
+    {
+        return self::writeFileOf($this->jars, $this->table, $this->version, $this->id);
+    }
+
+    public static function writeFileOf(Jars $jars, string $table, int $version, string $id): string
+    {
+        return $jars->dataFile($id, 'r', $table, $version);
     }
 }

@@ -30,29 +30,6 @@ class Linetype
         // Just allow subclasses to call parent constructor
     }
 
-    private function _unlink($token, $line, $tablelink)
-    {
-        $changed = [];
-
-        foreach ($this->find_incoming_links() as $incoming) {
-            if ($incoming->tablelink != $tablelink) {
-                continue;
-            }
-
-            $link = Link::of($this->jars, $incoming->tablelink, $line->id, !@$incoming->reverse);
-
-            foreach ($link->relatives() as $parent_id) {
-                $parent = $this->jars->linetype($incoming->parent_linetype)->get($token, $parent_id);
-                $parent->_disown = (object) [$link->property => $line->id];
-                $changed[] = $parent;
-            }
-
-            return $this->save($changed);
-        }
-
-        throw new Exception('No such tablelink');
-    }
-
     private function borrow_r($token, $line, $ignorelink = null)
     {
         // recurse to inline children
@@ -236,6 +213,26 @@ class Linetype
         return $fields;
     }
 
+    public final function find_incoming_inlines()
+    {
+        if (!isset(self::$incoming_inlines[$this->jars->token()])) {
+            self::$incoming_inlines[$this->jars->token()] = [];
+
+            foreach ($this->jars->config()->linetypes() as $name => $class) {
+                $linetype = $this->jars->linetype($name);
+
+                foreach ($linetype->inlinelinks as $child) {
+                    $link = clone $child;
+                    $link->parent_linetype = $name;
+
+                    self::$incoming_inlines[$this->jars->token()][$link->linetype][] = $link;
+                }
+            }
+        }
+
+        return self::$incoming_inlines[$this->jars->token()][$this->name] ?? [];
+    }
+
     public final function find_incoming_links()
     {
         if (!isset(self::$incoming_links[$this->jars->token()])) {
@@ -286,31 +283,11 @@ class Linetype
         return self::$incoming_links[$this->jars->token()][$this->name] ?? [];
     }
 
-    public final function find_incoming_inlines()
-    {
-        if (!isset(self::$incoming_inlines[$this->jars->token()])) {
-            self::$incoming_inlines[$this->jars->token()] = [];
-
-            foreach ($this->jars->config()->linetypes() as $name => $class) {
-                $linetype = $this->jars->linetype($name);
-
-                foreach ($linetype->inlinelinks as $child) {
-                    $link = clone $child;
-                    $link->parent_linetype = $name;
-
-                    self::$incoming_inlines[$this->jars->token()][$link->linetype][] = $link;
-                }
-            }
-        }
-
-        return self::$incoming_inlines[$this->jars->token()][$this->name] ?? [];
-    }
-
-    public function get(?string $token, string $id, &$inlines = [])
+    public function get(?string $token, string $id, int $version, &$inlines = [])
     {
         $collected = [];
 
-        $this->load_r($token, $id, $collected);
+        $this->load_r($token, $id, $version, $collected);
 
         $line = (object) array_map(function($callback) use ($collected) {
             return $callback($collected);
@@ -320,14 +297,14 @@ class Linetype
         $line->type = $this->name;
 
         $this->pack_r($token, $collected, $line);
-        $this->only_parent_r($line);
+        $this->only_parent_r($line, $version);
         $this->borrow_r($token, $line);
         $inlines = $this->strip_inline_children($line);
 
         return $line;
     }
 
-    public function get_childset($token, string $id, string $property, ?array &$lines_cache = null): array
+    public function get_childset(?string $token, string $id, int $version, string $property, ?array &$lines_cache = null): array
     {
         $child = @array_values(array_filter($this->children, fn ($o) => $o->property == $property))[0];
 
@@ -336,13 +313,13 @@ class Linetype
         }
 
         $childset = [];
-        $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
+        $link = Link::of($this->jars, $child->tablelink, $version, $id, @$child->reverse);
 
         if ($child_ids = $link->relatives()) {
             $childlinetype = $this->jars->linetype($child->linetype);
 
             foreach ($child_ids as $child_id) {
-                $childset[] = $child_line = $lines_cache[$child->linetype][$child_id] ?? $childlinetype->get($token, $child_id);
+                $childset[] = $child_line = $lines_cache[$child->linetype][$child_id] ?? $childlinetype->get($token, $child_id, $version);
 
                 if ($lines_cache !== null) {
                     $lines_cache[$child->linetype][$child_id] ??= $child_line;
@@ -358,8 +335,18 @@ class Linetype
         return false;
     }
 
-    public function import($token, Filesystem $original_filesystem, $timestamp, object $line, ?string $base_version, &$affecteds, &$commits, $ignorelink = null, ?int $logging = null, bool $differential = false)
-    {
+    public function import(
+        string $token,
+        $timestamp,
+        object $line,
+        int $head,
+        ?int $base_version,
+        &$affecteds,
+        &$commits,
+        $ignorelink = null,
+        ?int $logging = null,
+        bool $differential = false,
+    ): void {
         $this->jars->trigger('importline', $this->table);
 
         $clobber = !$differential && $this->is($line); // all deletes are differential saves
@@ -385,8 +372,8 @@ class Linetype
 
         if ($was = (bool) @$line->id) {
             $line->_given_id = $line->id;
-            $oldrecord = Record::of($this->jars, $this->table, $line->id);
-            $oldline = $this->get($token, $line->id, $old_inlines);
+            $oldrecord = Record::of($this->jars, $this->table, $head, $line->id);
+            $oldline = $this->get($token, $line->id, $head, $old_inlines);
 
             foreach (array_diff(array_keys(get_object_vars($oldline)), ['id', 'type']) as $property) {
                 if (!property_exists($line, $property)) {
@@ -412,17 +399,14 @@ class Linetype
                 echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
-            $record = $oldrecord ? clone $oldrecord : Record::of($this->jars, $this->table);
+            $record = Record::propose($this->jars, $this->table, $head + 1, $line->id);
 
             if (!$was) {
-                $record->created = $timestamp;
+                $record->init();
             }
 
-            $record->modified = $timestamp;
-            $record->id = $line->id;
-
             $affecteds[] = (object) [
-                'id' => $record->id,
+                'id' => $line->id,
                 'table' => $this->table,
                 'action' => 'save',
                 'record' => $record,
@@ -441,7 +425,7 @@ class Linetype
             }
 
             foreach ($this->find_incoming_links() as $parent) {
-                $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+                $link = Link::of($this->jars, $parent->tablelink, $head, $line->id, !@$parent->reverse);
 
                 foreach ($link->relatives() as $parent_id) {
                     $affecteds[] = (object) [
@@ -458,11 +442,10 @@ class Linetype
             }
 
             foreach ($this->children as $child) {
-                $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
+                $link = Link::of($this->jars, $child->tablelink, $head, $line->id, @$child->reverse);
 
                 if (@$child->cascade_delete) {
                     $this->jars->import_r(
-                        $original_filesystem,
                         $timestamp,
                         array_map(fn ($child_id) => (object) ['type' => $child->linetype, 'id' => $child_id, '_is' => false], $link->relatives()),
                         $base_version,
@@ -542,8 +525,8 @@ class Linetype
                         'right' => (@$parent->reverse ? $line->$alias : $line->id),
                         'tablelink' => $parent->tablelink,
                         'table' => $parent_table,
-                        'record' => Record::of($this->jars, $parent_table, $line->$alias),
-                        'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
+                        'record' => Record::propose($this->jars, $parent_table, $head + 1, $line->$alias),
+                        'oldrecord' => Record::of($this->jars, $parent_table, $head, $line->$alias),
                         'oldlinks' => [],
                     ];
 
@@ -567,10 +550,10 @@ class Linetype
 
             $child_linetype = $this->jars->linetype($child->linetype);
             $oldchild = null;
-            $link = Link::of($this->jars, $child->tablelink, $line->id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $head, $line->id, @$child->reverse);
 
             if ($oldchild_id = $link->firstChild()) {
-                $oldchild = Record::of($this->jars, $child_linetype->table, $oldchild_id);
+                $oldchild = Record::of($this->jars, $child_linetype->table, $head, $oldchild_id);
                 $oldchild->assertExistence();
             }
 
@@ -593,7 +576,6 @@ class Linetype
                     $discard = [];
 
                     $childlines = $this->jars->import_r(
-                        $original_filesystem,
                         $timestamp,
                         [$childline],
                         $base_version,
@@ -624,9 +606,9 @@ class Linetype
 
                     $child_linetype->import(
                         $token,
-                        $original_filesystem,
                         $timestamp,
                         (object) ['id' => $oldchild->id, '_is' => false],
+                        $head,
                         $base_version,
                         $affecteds,
                         $discard,
@@ -685,7 +667,7 @@ class Linetype
         return $this->jars;
     }
 
-    public function load_children(string $token, object $line, int $recursive = INF, array $ignorelinks = [])
+    public function load_children(string $token, object $line, int $version, int $recursive = INF, array $ignorelinks = [])
     {
         foreach ($this->children as $child) {
             if (in_array($child->tablelink, $ignorelinks)) {
@@ -693,19 +675,19 @@ class Linetype
             }
 
             $child_ignorelinks = array_merge($ignorelinks, [$child->tablelink]);
-            $line->{$child->property} = $this->get_childset($token, $line, $child->property);
+            $line->{$child->property} = $this->get_childset($token, $line, $version, $child->property);
 
             if ($recursive > 0) {
                 foreach ($childset as $childline) {
-                    $childlinetype->load_children($token, $childline, $recursive - 1, $child_ignorelinks);
+                    $childlinetype->load_children($token, $childline, $version, $recursive - 1, $child_ignorelinks);
                 }
             }
         }
     }
 
-    protected function load_r($token, $id, &$collected, $path = '/', $ignorelink = null)
+    protected function load_r(?string $token, string $id, int $version, &$collected, $path = '/', $ignorelink = null)
     {
-        $record = Record::of($this->jars, $this->table, $id);
+        $record = Record::of($this->jars, $this->table, $version, $id);
         $record->assertExistence();
 
         $collected[$path] = (object) $record->toArray();
@@ -722,13 +704,13 @@ class Linetype
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $link = Link::of($this->jars, $child->tablelink, $id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $version, $id, @$child->reverse);
 
             if ($child_ids = $link->relatives()) {
                 $childlinetype = $this->jars->linetype($child->linetype);
 
                 foreach ($child_ids as $child_id) {
-                    $childlinetype->load_r($token, $child_id, $collected, $childpath, $child->tablelink);
+                    $childlinetype->load_r($token, $child_id, $version, $collected, $childpath, $child->tablelink);
                 }
             }
         }
@@ -743,7 +725,7 @@ class Linetype
         }
     }
 
-    public function only_parent_r(object $line, ?string $ignorelink = null)
+    public function only_parent_r(object $line, int $version, ?string $ignorelink = null)
     {
         foreach ($this->find_incoming_links() as $parent) {
             if (!$alias = @$parent->only_parent) {
@@ -751,13 +733,15 @@ class Linetype
             }
 
             $line->$alias = null;
-            $link = Link::of($this->jars, $parent->tablelink, $line->id, !@$parent->reverse);
+            $link = Link::of($this->jars, $parent->tablelink, $version, $line->id, !@$parent->reverse);
 
             if (!$parent_id = $link->firstChild()) {
                 continue;
             }
 
-            if (!Record::of($this->jars, $this->jars->linetype($parent->parent_linetype)->table, $parent_id)->exists()) {
+            $table = $this->jars->linetype($parent->parent_linetype)->table;
+
+            if (!Record::of($this->jars, $table, $version, $parent_id)->exists()) {
                 throw new Exception('Parent [' . $parent_id . '] does not exist');
             }
 
@@ -775,7 +759,7 @@ class Linetype
                 $this
                     ->jars
                     ->linetype($child->linetype)
-                    ->only_parent_r($childline, $child->tablelink);
+                    ->only_parent_r($childline, $version, $child->tablelink);
             }
         }
     }
@@ -824,10 +808,9 @@ class Linetype
     }
 
     public function recurse_to_children(
-        Filesystem $original_filesystem,
         string $timestamp,
         object $line,
-        ?string $base_version,
+        ?int $base_version,
         array &$affecteds,
         array &$commits,
         ?string $ignorelink = null,
@@ -855,7 +838,6 @@ class Linetype
                 }
 
                 $childlines = $this->jars->import_r(
-                    $original_filesystem,
                     $timestamp,
                     $childlines,
                     $base_version,
@@ -915,20 +897,6 @@ class Linetype
                 }
             }
         }
-    }
-
-    public function save($lines): array
-    {
-        throw new Exception('Linetype::save() used');
-        foreach ($lines as $line) {
-            if (!@$line->type) {
-                $line->type = $this->name;
-            } elseif ($line->type != $this->name) {
-                throw new Exception('Given line->type inconsistent with Linetype');
-            }
-        }
-
-        return $this->jars->import(date('Y-m-d H:i:s'), $lines);
     }
 
     public function scrub($token, $line)
@@ -991,15 +959,6 @@ class Linetype
         }
 
         return $stripped;
-    }
-
-    public function unlink($token, $line, $from)
-    {
-        if (!$this->jars->verify_token($token)) {
-            return false;
-        }
-
-        return $this->_unlink($token, $line, $from);
     }
 
     public function unpack($line, $oldline, $old_inlines)
