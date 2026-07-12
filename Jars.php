@@ -1147,10 +1147,13 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                             $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
 
-                            try {
-                                $current_groups = static::classify($line, $listen, $report);
-                            } catch (Exception $e) {
-                                throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
+
+                            if ($change->sign !== '+') {
+                                try {
+                                    $current_groups = static::classify($line, $listen, $report);
+                                } catch (Exception $e) {
+                                    throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
+                                }
                             }
                         }
 
