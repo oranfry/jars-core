@@ -13,12 +13,15 @@ use OranFry\Jars\Contract\Exception;
 class Jars implements \OranFry\Jars\Contract\Client
 {
     private Filesystem $filesystem;
+    private Locker $locker;
     private static ?object $debug_node = null;
     private static ?object $debug_root = null;
     private ?int $head = null;
+    private ?int $pointer = null;
     private ?string $token = null;
     private array $known = [];
     private array $listeners = [];
+    private int $numIssued = 0;
     private array $verified_tokens = [];
     private Config $config;
     private string $db_home;
@@ -38,6 +41,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         $this->config = $config;
         $this->db_home = $db_home;
         $this->filesystem = new Filesystem($this->db_path('tmp'));
+        $this->locker = new Locker($this->touch_file(), $this->reports_lock_file());
 
         if (!($this->config->linetypes()['token'] ?? null)) {
             throw new Exception('Missing token linetype');
@@ -127,10 +131,6 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new ConcurrentModificationException("Incorrect base version. Head: [$this->head], base version: none");
         }
 
-        $master_meta_file = $this->masterlog_meta_file();
-
-        // $this->head = $this->db_version();
-
         // complain if this would cause concurrent modification
 
         if ($modified_ids && $base_version !== $this->head) {
@@ -150,11 +150,9 @@ class Jars implements \OranFry\Jars\Contract\Client
             }
         }
 
-        $this->head = $this->head + 1;
-
-        $this->filesystem->put($this->metaFile($this->head), implode(' ', $meta) . "\n");
-        $this->filesystem->put($this->masterFile($this->head), $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES) . "\n");
-        $this->filesystem->put($this->db_version_file(), $this->head, 200);
+        $this->filesystem->put($this->metaFile($this->head + 1), implode(' ', $meta) . "\n");
+        $this->filesystem->put($this->masterFile($this->head + 1), $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES) . "\n");
+        $this->filesystem->put($this->pointerFile($this->head + 1), $this->pointer + $this->numIssued);
     }
 
     public function config()
@@ -203,16 +201,6 @@ class Jars implements \OranFry\Jars\Contract\Client
     public function db_path(?string $path = null): string
     {
         return $this->db_home . ($path ? '/' . $path : null);
-    }
-
-    private function db_version(): int
-    {
-        return $this->filesystem->get($this->db_version_file()) ?? 0;
-    }
-
-    private function db_version_file(): string
-    {
-        return $this->db_path('version.dat');
     }
 
     public static function debug_push(string $activity): void
@@ -272,7 +260,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->db_version();
+        $this->loadVersionInfo();
 
         return $this->linetype($linetype_name)->delete($id);
     }
@@ -370,7 +358,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->db_version();
+        $this->loadVersionInfo();
 
         $line = $this->linetype($linetype_name)->get($this->token, $id, $this->head);
 
@@ -452,29 +440,35 @@ class Jars implements \OranFry\Jars\Contract\Client
         bool $differential = false,
     ): array
     {
-        $base_version ??= $this->head;
-
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        if (!$dryrun) {
-            $pin = $this->lock();
+        if ($iLock = !$dryrun && !$this->locker->isPrimaryLocked()) {
+            $pin = $this->lockPrimary();
+            $this->head = $this->locker->head();
         }
 
         // we have the floor!
 
-        $this->head = $this->db_version();
+        $base_version ??= $this->head;
+
+        $this->loadVersionInfo();
 
         try {
-            return $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
-        } catch (\Exception $e) {
-            $this->filesystem->reset();
-            throw $e;
-        } finally {
-            if (isset($pin)) {
-                $this->lock($pin); // unlock
+            $result = $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
+
+            if ($iLock) {
+                $this->unlockPrimary($pin, $this->head);
             }
+
+            return $result;
+        } catch (\Exception $e) {
+            if ($iLock) {
+                $this->unlockPrimary($pin);
+            }
+
+            throw $e;
         }
     }
 
@@ -566,6 +560,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             static::debug_pop();
 
             $this->filesystem->reset();
+            $this->numIssued = 0;
 
             return $updated;
         }
@@ -584,9 +579,14 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         static::debug_push('Dredge');
 
-        $updated = $this->dredge_r($lines, $this->head);
+        $updated = $this->dredge_r($lines, $this->head + 1);
 
         static::debug_pop();
+
+        $this->head = $this->head + 1;
+        $this->pointer = $this->pointer + $this->numIssued;
+        $this->numIssued = 0;
+
 
         return $updated;
     }
@@ -666,6 +666,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         return $info;
+    }
+
+    public function isPrimaryLocked(): bool
+    {
+        return $this->locker->isPrimaryLocked();
     }
 
     public function linetype(string $name): object
@@ -805,64 +810,28 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
     }
 
-    private function _lock(string $file, ?string $_pin): self|string|null
+    private function loadVersionInfo(): void
     {
-        static $pin, $handle;
-
-        if (null === $_pin) { // lock
-            if ($handle) {
-                // throw new Exception('Attempt to lock when already locked [' . $file . ']');
-                return null; // locked by a higher-level import
-            }
-
-            @mkdir(dirname($file), 0777, true);
-
-            // TODO: Implement timeout using non-blocking locking in a loop until
-
-            if (!($handle = fopen($file, 'a'))) {
-                throw new Exception('Could not open the touch file');
-            }
-
-            if (!flock($handle, LOCK_EX)) {
-                fclose($handle);
-
-                $handle = null;
-
-                throw new Exception('Could not acquire a lock over the touch file');
-            }
-
-            return $pin = bin2hex(random_bytes(32));
+        if ($this->head === null) {
+            $this->head = intval(trim($this->filesystem->get($this->touch_file()) ?? '0'));
         }
 
-        // unlock
-
-        if (!$handle) {
-            throw new Exception('Attempt to unlock when not locked [' . $file . ']');
+        if ($this->head = 0) {
+            $this->pointer = 1;
+        } else {
+            $contents = $this->filesystem->get($this->pointerFile($this->head));
+            $this->pointer = intval(trim($contents));
         }
-
-        if ($pin !== $_pin) {
-            throw new Exception('Incorrect locker PIN provided for unlocking');
-        }
-
-        ftruncate($handle, 0);
-        fwrite($handle, microtime(true));
-        fsync($handle);
-        fclose($handle);
-
-        $handle = null;
-        $pin = null;
-
-        return $this;
     }
 
-    public function lock(?string $_pin = null): self|string|null
+    public function lockPrimary(): ?string
     {
-        return $this->_lock($this->touch_file(), $_pin);
+        return $this->locker->lockPrimary();
     }
 
-    public function lockReports(?string $_pin = null): self|string|null
+    public function lockReports(): ?string
     {
-        return $this->_lock($this->reports_lock_file(), $_pin);
+        return $this->locker->lockReports();
     }
 
     public function login(?string $username = null, ?string $password = null, bool $one_time = false): ?string
@@ -932,31 +901,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         ]));
     }
 
-    public function masterlog_check(): void
-    {
-        if (!$this->verify_token($this->token())) {
-            throw new BadTokenException;
-        }
-
-        if (!static::writable($this->masterlog_file())) {
-            throw new Exception('Master record file not writable');
-        }
-
-        if (!static::writable($this->masterlog_meta_file())) {
-            throw new Exception('Master meta file not writable');
-        }
-    }
-
-    public function masterlog_file(): string
-    {
-        return $this->db_path('master.dat');
-    }
-
-    public function masterlog_meta_file(): string
-    {
-        return $this->db_path('master.dat.meta');
-    }
-
     private function meta_ids(array $meta): array
     {
         return array_unique(array_merge(...array_map(fn ($change) => explode(
@@ -968,7 +912,7 @@ class Jars implements \OranFry\Jars\Contract\Client
     private function metaFile(int $version): string
     {
         return $this->dataFile(
-            hash('sha256', 'version-meta-' . $version),
+            hash('sha256', 'version-' . $version),
             'meta',
         );
     }
@@ -994,6 +938,14 @@ class Jars implements \OranFry\Jars\Contract\Client
         $this->filesystem->persist();
 
         return $this;
+    }
+
+    private function pointerFile(int $version): string
+    {
+        return $this->dataFile(
+            hash('sha256', 'version-' . $version),
+            'pointer',
+        );
     }
 
     public function preview(array $lines, ?int $base_version = null): array
@@ -1056,7 +1008,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->db_version();
+        $this->loadVersionInfo();
 
         return Record::of($this, $table_name, $this->head, $id)
             ->currentContents();
@@ -1082,7 +1034,8 @@ class Jars implements \OranFry\Jars\Contract\Client
         // we have the floor!
 
         try {
-            $bunny = $this->db_version();
+            $this->loadVersionInfo();
+            $bunny = $this->head;
             $changed_reports = [];
 
             // preload the metas we need
@@ -1252,7 +1205,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             $this->filesystem->persist()->reset();
         } finally {
             if (isset($pin)) {
-                $this->lockReports($pin); // unlock
+                $this->unlockReports($pin);
             }
         }
 
@@ -1453,17 +1406,18 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $result;
     }
 
-    public function takeanumber(): string
+    public function takeANumber(): string
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        $pointer_file = $this->db_home . '/pointer.dat';
-        $id = $this->n2h($pointer = $this->filesystem->get($pointer_file) ?? 1);
+        $idNumber = $this->pointer + $this->numIssued;
+        $id = $this->n2h($idNumber);
 
-        $this->trigger('takeanumber', $pointer, $id);
-        $this->filesystem->put($pointer_file, $pointer + 1);
+        $this->trigger('takeanumber', $idNumber, $id);
+
+        $this->numIssued++;
 
         return $id;
     }
@@ -1485,7 +1439,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        $this->head = $this->db_version();
+        $this->loadVersionInfo();
 
         return (object) [
             'timestamp' => time(),
@@ -1516,6 +1470,22 @@ class Jars implements \OranFry\Jars\Contract\Client
                 $listener->$method(...$arguments);
             }
         }
+    }
+
+    public function unlockPrimary(string $pin): self
+    {
+        $this->filesystem->persist();
+        $this->locker->unlockPrimary($pin, $this->head);
+
+        return $this;
+    }
+
+    public function unlockReports(string $pin): self
+    {
+        $this->filesystem->persist();
+        $this->locker->unlockReports($pin);
+
+        return $this;
     }
 
     public static function validate_password(string $password): bool
@@ -1555,7 +1525,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         $line = null;
 
         try {
-            $line = $this->linetype('token')->get(null, $id, $this->db_version());
+            $line = $this->linetype('token')->get(null, $id, $this->head);
         } catch (\Exception $e) {}
 
         if (

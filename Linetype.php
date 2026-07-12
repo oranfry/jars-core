@@ -381,7 +381,7 @@ class Linetype
                 }
             }
         } else {
-            $line->id = $this->jars->takeanumber();
+            $line->id = $this->jars->takeANumber();
         }
 
         $this->complete($line);
