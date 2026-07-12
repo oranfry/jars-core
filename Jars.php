@@ -816,7 +816,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             $this->head = intval(trim($this->filesystem->get($this->touch_file()) ?? '0'));
         }
 
-        if ($this->head = 0) {
+        if ($this->head === 0) {
             $this->pointer = 1;
         } else {
             $contents = $this->filesystem->get($this->pointerFile($this->head));
