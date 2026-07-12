@@ -1523,6 +1523,8 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         $line = null;
 
+        $this->loadVersionInfo();
+
         try {
             $line = $this->linetype('token')->get(null, $id, $this->head);
         } catch (\Exception $e) {}
