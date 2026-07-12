@@ -1043,10 +1043,6 @@ class Jars implements \OranFry\Jars\Contract\Client
             $all_reports = array_keys($this->config->reports());
             $unaffected_reports = array_flip($all_reports);
 
-            if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                error_log("Refreshing $from ~ $bunny (Δ $length)...");
-            }
-
             foreach ($all_reports as $report_name) {
                 $report = $this->report($report_name);
 
