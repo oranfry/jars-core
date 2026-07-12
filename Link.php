@@ -45,13 +45,13 @@ class Link
         return $this->reverse ? 'back' : 'forth';
     }
 
-    private function export(): string
+    private function export(): array
     {
         if ($this->data === null) {
             $this->load();
         }
 
-        return json_encode($this->data, JSON_UNESCAPED_SLASHES);
+        return $this->data;
     }
 
     public function firstChild(): ?string
@@ -66,9 +66,8 @@ class Link
     private function load(): self
     {
         $file = $this->readFile();
-        $json = $file ? $this->jars->filesystem()->get($file) : '[]';
 
-        $this->data = json_decode($json, true);
+        $this->data = $file ? $this->jars->filesystem()->get($file) : [];
 
         return $this;
     }

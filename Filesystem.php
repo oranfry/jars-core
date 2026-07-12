@@ -58,10 +58,10 @@ class Filesystem
         return $this;
     }
 
-    public function get(string $file, ?string $default = null)
+    public function get(string $file)
     {
         if (!$this->cached($file)) {
-            $this->load($file, $default);
+            $this->load($file);
         }
 
         return $this->store[$file]->content;
@@ -111,12 +111,13 @@ class Filesystem
         return $files;
     }
 
-    private function load($file, ?string $default = null)
+    private function load($file)
     {
         if (is_file($file)) {
-            $content = file_get_contents($file);
+            $fileContents = trim(file_get_contents($file));
+            $content = json_decode($fileContents);
         } else {
-            $content = $default;
+            $content = null;
         }
 
         $this->store[$file] = (object) [
@@ -146,7 +147,7 @@ class Filesystem
 
             foreach ($subStore as $file => $details) {
                 if ($details->content !== null) {
-                    $putters[] = (new FilePutter($file, $details->content, $this->tmpDir))->prepare();
+                    $putters[] = (new FilePutter($file, json_encode($details->content, JSON_UNESCAPED_SLASHES), $this->tmpDir))->prepare();
                     $workDone['add']++;
                 } elseif (is_file($file)) {
                     $unlink[] = $file;

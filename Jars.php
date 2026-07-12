@@ -137,7 +137,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             $comparison_metas = [];
 
             for ($_version = $base_version; $_version < $this->head; $_version++) {
-                $comparison_metas[] = $this->getMeta($_version + 1);
+                $comparison_metas = array_merge($comparison_metas, $this->getMeta($_version + 1));
             }
 
             $comodified_ids = array_map(
@@ -150,8 +150,8 @@ class Jars implements \OranFry\Jars\Contract\Client
             }
         }
 
-        $this->filesystem->put($this->metaFile($this->head + 1), implode(' ', $meta) . "\n");
-        $this->filesystem->put($this->masterFile($this->head + 1), $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES) . "\n");
+        $this->filesystem->put($this->metaFile($this->head + 1), $meta);
+        $this->filesystem->put($this->masterFile($this->head + 1), (object) ['timestamp' => $timestamp, 'commits' => array_values($commits)]);
         $this->filesystem->put($this->pointerFile($this->head + 1), $this->pointer + $this->numIssued);
     }
 
@@ -378,12 +378,13 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $this->linetype($linetype_name)->get_childset($this->token, $id, $this->head, $property, $lines_cache);
     }
 
-    private function getMeta(int $version): string
+    private function getMeta(int $version): array
     {
         if (!$meta = $this->filesystem->get($this->metaFile($version))) {
             throw new Exception("No meta for version $version");
         }
-        return rtrim($this->filesystem->get($this->metaFile($version)), "\n");
+
+        return $meta;
     }
 
     public function group(string $report_name, string $group = '', int|true|null $min_version = null)
@@ -813,7 +814,7 @@ class Jars implements \OranFry\Jars\Contract\Client
     private function loadVersionInfo(): void
     {
         if ($this->head === null) {
-            $this->head = intval(trim($this->filesystem->get($this->touch_file()) ?? '0'));
+            $this->head = $this->filesystem->get($this->touch_file()) ?? 0;
         }
 
         if ($this->head === 0) {
@@ -1035,6 +1036,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         try {
             $this->loadVersionInfo();
+
             $bunny = $this->head;
             $changed_reports = [];
 
@@ -1064,7 +1066,11 @@ class Jars implements \OranFry\Jars\Contract\Client
                 $relatives = [];
 
                 for ($version = $greyhound; $version <= $bunny - 1; $version++) {
-                    foreach (explode(' ', $this->getMeta($version + 1)) as $meta) {
+                    if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                        error_log("    Processing version $version");
+                    }
+
+                    foreach ($this->getMeta($version + 1) as $meta) {
                         // connection
 
                         if (preg_match('/^>/', $meta)) {
@@ -1116,7 +1122,33 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                 $report_affected = false;
 
+                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                    $numChanges = count($changes);
+                    $numChangesStrLen = strlen($numChanges);
+                    error_log("    Found [$numChanges] changes");
+                }
+
+                $count = 0;
+
+                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                    $starttime = microtime(true);
+                }
+
                 foreach ($changes as $id => $change) {
+                    if ($count && ($count === $numChanges || !($count % 10000))) {
+                        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                            $now = microtime(true);
+                            $delta = number_format($now - $starttime, 4);
+                            $starttime = $now;
+                            $percent = number_format(($count / $numChanges) * 100, 2);
+                            error_log("    $delta Processing change [ " . str_pad($count, $numChangesStrLen, ' ', STR_PAD_LEFT) . " / $numChanges ] " . str_pad($percent, 5, ' ', STR_PAD_LEFT) . "% $change->sign:$change->table/$id");
+                        }
+
+                        $this->filesystem->persist()->reset();
+                    }
+
+                    $count++;
+
                     foreach ($report->listen as $linetype_name => $listen) {
                         if (is_numeric($linetype_name)) {
                             $linetype_name = $listen;
@@ -1147,13 +1179,10 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                             $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
 
-
-                            if ($change->sign !== '+') {
-                                try {
-                                    $current_groups = static::classify($line, $listen, $report);
-                                } catch (Exception $e) {
-                                    throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
-                                }
+                            try {
+                                $current_groups = static::classify($line, $listen, $report);
+                            } catch (Exception $e) {
+                                throw new Exception($e->getMessage() . ' in report [' . $report_name . ']');
                             }
                         }
 
@@ -1245,6 +1274,10 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                     $report_affected = true;
 
+                    if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                        error_log("Refreshing derived report $derived_reportname");
+                    }
+
                     try {
                         if (property_exists($listen, 'classify') && $listen->classify) {
                             $derived_groupnames = @static::classifier_value($listen->classify, $change_groupname);
@@ -1278,7 +1311,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                         $group_file = $this->db_path("reports/$derived_reportname/$derived_groupname.json");
 
                         if ($exists = $cache[$derived_reportname][$derived_groupname] !== null) {
-                            $this->filesystem->put($group_file, json_encode($cache[$derived_reportname][$derived_groupname], JSON_UNESCAPED_SLASHES));
+                            $this->filesystem->put($group_file, $cache[$derived_reportname][$derived_groupname]);
 
                             if (!in_array($derived_groupname, $groups)) {
                                 $groups[] = $derived_groupname;

@@ -65,11 +65,7 @@ abstract class Report
             $this->wait_for_version($min_version, $timeout_microseconds);
         }
 
-        if (!$diskContent = $this->filesystem->get($this->file($group))) {
-            return static::DEFAULT_VALUE;
-        }
-
-        return json_decode($diskContent);
+        return $this->filesystem->get($this->file($group)) ?? static::DEFAULT_VALUE;
     }
 
     public function groups(string $prefix = '', ?int $min_version = null, ?int $timeout_microseconds = null): array
@@ -82,7 +78,7 @@ abstract class Report
             $this->wait_for_version($min_version, $timeout_microseconds);
         }
 
-        return json_decode($this->filesystem->get($this->groupsfile($prefix)) ?? '[]');
+        return $this->filesystem->get($this->groupsfile($prefix)) ?? [];
     }
 
     private function groupsfile(string $prefix): string
@@ -170,7 +166,7 @@ abstract class Report
         }
 
         $groupsfile = $this->groupsfile($prefix);
-        $groups = json_decode($this->filesystem->get($groupsfile) ?? '[]');
+        $groups = $this->filesystem->get($groupsfile) ?? [];
 
         if ($exists) {
             if (!in_array($subgroup, $groups)) {
@@ -182,10 +178,8 @@ abstract class Report
             $groups = array_values($groups);
         }
 
-        $export = json_encode($groups, static::ENCODING_OPTIONS);
-
-        if ($exists = $export !== '[]') {
-            $this->filesystem->put($groupsfile, $export);
+        if ($exists = (bool) $groups) {
+            $this->filesystem->put($groupsfile, $groups);
         } else {
             $this->filesystem->delete($groupsfile);
         }
@@ -216,11 +210,10 @@ abstract class Report
             throw new Exception('Invalid group');
         }
 
-        $export = json_encode($data, static::ENCODING_OPTIONS);
         $reportfile = $this->file($group);
 
-        if ($exists = $export !== json_encode(static::DEFAULT_VALUE, static::ENCODING_OPTIONS)) {
-            $this->filesystem->put($reportfile, $export);
+        if ($exists = (bool) $data) {
+            $this->filesystem->put($reportfile, $data);
         } else {
             $this->filesystem->delete($reportfile);
         }

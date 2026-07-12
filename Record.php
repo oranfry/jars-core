@@ -83,7 +83,7 @@ class Record
         }
     }
 
-    public function __toString(): string
+    public function x__toString(): string
     {
         return $this->export();
     }
@@ -157,7 +157,7 @@ class Record
             return false;
         }
 
-        return $contents !== json_encode(false);
+        return $contents !== false;
     }
 
     private function export()
@@ -167,14 +167,14 @@ class Record
         }
 
         if ($this->deleted) {
-            return json_encode(false);
+            return false;
         }
 
         if ($this->format == 'binary') {
             return $this->data['content'];
         }
 
-        return json_encode($this->data, JSON_UNESCAPED_SLASHES);
+        return $this->data;
     }
 
     public function init()
@@ -192,11 +192,11 @@ class Record
         if ($this->format == 'binary') {
             $this->data = ['content' => $content];
         } else {
-            $this->data = json_decode($content, true);
-
-            if (!is_array($this->data)) {
+            if (!is_object($content)) {
                 throw new Exception('Invalid JSON found in a record file [' . $file . ']');
             }
+
+            $this->data = (array) $content;
         }
     }
 
