@@ -151,8 +151,13 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         $this->filesystem->put($this->metaFile($this->head + 1), $meta);
-        $this->filesystem->put($this->masterFile($this->head + 1), (object) ['timestamp' => $timestamp, 'commits' => array_values($commits)]);
         $this->filesystem->put($this->pointerFile($this->head + 1), $this->pointer + $this->numIssued);
+
+        $this->filesystem->put(
+            $this->masterFile($this->head + 1),
+            $timestamp . ' ' . json_encode(array_values($commits), JSON_UNESCAPED_SLASHES) . "\n",
+            true,
+        );
     }
 
     public function config()
@@ -1066,10 +1071,6 @@ class Jars implements \OranFry\Jars\Contract\Client
                 $relatives = [];
 
                 for ($version = $greyhound; $version <= $bunny - 1; $version++) {
-                    if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                        error_log("    Processing version $version");
-                    }
-
                     foreach ($this->getMeta($version + 1) as $meta) {
                         // connection
 
@@ -1212,9 +1213,13 @@ class Jars implements \OranFry\Jars\Contract\Client
                 }
 
                 if ($report_affected) {
-                    $this->filesystem->put($report->version_file(), $bunny, 200); // the greyhound has caught the bunny!
+                    $this->filesystem->put($report->version_file(), $bunny, false, 200); // the greyhound has caught the bunny!
 
                     unset($unaffected_reports[$report_name]);
+                }
+
+                if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                    error_log("    Refreshed report $report_name [$greyhound → $bunny]");
                 }
             }
 
@@ -1226,7 +1231,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             if ($unaffected_reports) {
                 foreach (array_keys($unaffected_reports) as $report_name) {
-                    $this->filesystem->put($this->report($report_name)->version_file(), $bunny, 200);
+                    $this->filesystem->put($this->report($report_name)->version_file(), $bunny, false, 200);
                 }
             }
 
@@ -1332,7 +1337,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             }
 
             if ($report_affected) {
-                $this->filesystem->put($derived_report->version_file(), $version, 200); // the greyhound has caught the bunny!
+                $this->filesystem->put($derived_report->version_file(), $version, false, 200); // the greyhound has caught the bunny!
 
                 unset($unaffected_reports[$derived_reportname]);
             }

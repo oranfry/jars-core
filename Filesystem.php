@@ -58,10 +58,10 @@ class Filesystem
         return $this;
     }
 
-    public function get(string $file)
+    public function get(string $file, bool $binary = false)
     {
         if (!$this->cached($file)) {
-            $this->load($file);
+            $this->load($file, $binary);
         }
 
         return $this->store[$file]->content;
@@ -111,13 +111,13 @@ class Filesystem
         return $files;
     }
 
-    private function load($file)
+    private function load($file, bool $binary)
     {
+        $content = null;
+
         if (is_file($file)) {
-            $fileContents = trim(file_get_contents($file));
-            $content = json_decode($fileContents);
-        } else {
-            $content = null;
+            $fileContents = file_get_contents($file);
+            $content = $binary ? $fileContents : json_decode(trim($fileContents));
         }
 
         $this->store[$file] = (object) [
@@ -147,7 +147,8 @@ class Filesystem
 
             foreach ($subStore as $file => $details) {
                 if ($details->content !== null) {
-                    $putters[] = (new FilePutter($file, json_encode($details->content, JSON_UNESCAPED_SLASHES), $this->tmpDir))->prepare();
+                    $export = $details->binary ? $details->content : json_encode($details->content, JSON_UNESCAPED_SLASHES);
+                    $putters[] = (new FilePutter($file, $export, $this->tmpDir))->prepare();
                     $workDone['add']++;
                 } elseif (is_file($file)) {
                     $unlink[] = $file;
@@ -178,12 +179,13 @@ class Filesystem
         return $this;
     }
 
-    public function put(string $file, $content, int $priority = 100)
+    public function put(string $file, $content, bool $binary = false, int $priority = 100)
     {
         $this->store[$file] = (object) [
             'content' => $content,
             'dirty' => true,
             'priority' => $priority,
+            'binary' => $binary,
         ];
     }
 

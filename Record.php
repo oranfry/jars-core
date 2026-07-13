@@ -153,7 +153,7 @@ class Record
             return false;
         }
 
-        if (null === $contents = $this->jars->filesystem()->get($file)) {
+        if (null === $contents = $this->jars->filesystem()->get($file, $this->isBinary())) {
             return false;
         }
 
@@ -170,11 +170,11 @@ class Record
             return false;
         }
 
-        if ($this->format == 'binary') {
+        if ($this->isBinary()) {
             return $this->data['content'];
         }
 
-        return $this->data;
+        return (object) $this->data;
     }
 
     public function init()
@@ -182,14 +182,19 @@ class Record
         $this->data = [];
     }
 
+    public function isBinary(): bool
+    {
+        return $this->format == 'binary';
+    }
+
     private function load()
     {
         $this->assertExistence();
 
         $file = $this->readFile();
-        $content = $this->jars->filesystem()->get($file);
+        $content = $this->jars->filesystem()->get($file, $this->isBinary());
 
-        if ($this->format == 'binary') {
+        if ($this->isBinary()) {
             $this->data = ['content' => $content];
         } else {
             if (!is_object($content)) {
@@ -270,6 +275,7 @@ class Record
             $this->jars->filesystem()->put(
                 $this->writeFile(),
                 $this->export(),
+                $this->isBinary(),
             );
         }
 

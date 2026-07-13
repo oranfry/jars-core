@@ -105,6 +105,7 @@ class Locker
 
         if (null !== $contents) {
             ftruncate($lock->handle, 0);
+            rewind($lock->handle);
             fwrite($lock->handle, $contents);
             fsync($lock->handle);
         }
