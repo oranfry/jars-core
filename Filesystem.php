@@ -6,8 +6,11 @@ use OranFry\Jars\Contract\Exception;
 
 class Filesystem
 {
+    const DEFAULT_LIMIT = 500;
+
     private array $store = [];
     private string $tmpDir;
+    private int $inMemory = 0;
 
     public function __clone()
     {
@@ -27,7 +30,6 @@ class Filesystem
 
     public function __destruct()
     {
-
         foreach ($this->store as $file => $details) {
             if ($details->dirty) {
                 error_log(spl_object_id($this) .  ' Lossy filesystem destruction: ' . $file);
@@ -42,25 +44,44 @@ class Filesystem
 
     public function delete(string $file, int $priority = 100)
     {
-        $this->store[$file] = (object) [
-            'content' => null,
-            'dirty' => true,
-            'priority' => $priority,
-        ];
+        $this->put($file, null, false, $priority);
     }
 
     public function forget(string $file): self
     {
         if (!@$this->store[$file]->dirty) {
+            if ($this->store[$file]->content !== null) {
+                $this->inMemory--;
+            }
+
             unset($this->store[$file]);
         }
 
         return $this;
     }
 
+    public static function generateErrorMessage(string $filename, string $what): string
+    {
+        return "Could not file_put_contents [$filename], failed to $what";
+    }
+
     public function get(string $file, bool $binary = false)
     {
+        if ($tmpFile = $this->store[$file]->tmpFile ?? null) {
+            $this->store[$file]->content = match (true) {
+                $tmpFile === ':delete' => null,
+                $binary => file_get_contents($tmpFile),
+                default => json_decode(file_get_contents($tmpFile)),
+            };
+
+            $this->store[$file]->tmpFile = null;
+            $this->inMemory++;
+
+            unlink($tmpFile);
+        }
+
         if (!$this->cached($file)) {
+            $this->promptOffload();
             $this->load($file, $binary);
         }
 
@@ -70,10 +91,21 @@ class Filesystem
     public function has(string $file)
     {
         if ($this->cached($file)) {
-            return $this->store[$file]->content !== null;
+            $tmpFile = $this->store[$file]->tmpFile ?? null;
+
+            return $this->store[$file]->content !== null || ($tmpFile && $tmpFile !== ':delete');
         }
 
         return is_file($file);
+    }
+
+    public function limit(): int
+    {
+        if (defined('JARS_FILESYSTEM_LIMIT')) {
+            return JARS_FILESYSTEM_LIMIT;
+        }
+
+        return self::DEFAULT_LIMIT;
     }
 
     public function list(string $dir): array
@@ -97,7 +129,9 @@ class Filesystem
 
             $basename = $matches[1];
 
-            if ($details->content !== null) {
+            $tmpFile = $details->tmpFile;
+
+            if ($details->content !== null || ($tmpFile && $tmpFile !== ':delete')) {
                 $files[$basename] = true;
             } elseif (isset($files[$basename])) {
                 unset($files[$basename]);
@@ -120,14 +154,77 @@ class Filesystem
             $content = $binary ? $fileContents : json_decode(trim($fileContents));
         }
 
+        if ($content !== null) {
+            $this->inMemory++;
+        }
+
         $this->store[$file] = (object) [
             'content' => $content,
             'dirty' => false,
+            'tmpFile' => null,
+            'binary' => $binary,
         ];
+    }
+
+    private function offload(): void
+    {
+        foreach ($this->store as $file => $details) {
+            if (!$details->dirty) {
+                unset($this->store[$file]);
+            }
+
+            if ($details->tmpFile) {
+                continue;
+            }
+
+            if ($details->content === null) {
+                $details->tmpFile = ':delete';
+            } else {
+                $tmpFile = $this->newTmpFile();
+                $dirname = dirname($tmpFile);
+
+                if (!is_dir($dirname) && !mkdir($dirname, 0777, true)) {
+                    throw new Exception($this->generateErrorMessage($tmpFile, 'mkdir tmp'));
+                }
+
+                if (!$handle = fopen($tmpFile, 'w')) {
+                    throw new Exception($this->generateErrorMessage($tmpFile, 'fopen'));
+                }
+
+                $export = $details->binary ? $details->content : json_encode($details->content, JSON_UNESCAPED_SLASHES);
+
+                if (fwrite($handle, $export) === false) {
+                    throw new Exception($this->generateErrorMessage($tmpFile, 'fwrite'));
+                }
+
+                if (!fsync($handle)) {
+                    throw new Exception($this->generateErrorMessage($tmpFile, 'fsync'));
+                }
+
+                if (!fclose($handle)) {
+                    throw new Exception($this->generateErrorMessage($tmpFile, 'fclose'));
+                }
+
+                $details->tmpFile = $tmpFile;
+
+                $this->inMemory--;
+            }
+
+            $details->content = null;
+        }
+    }
+
+    private function newTmpFile(): string
+    {
+        $random = bin2hex(random_bytes(8));
+
+        return $this->tmpDir . '/' . substr($random, 0, 2) . '/' . substr($random, 2, 2) . '/' . substr($random, 4);
     }
 
     public function persist(): self
     {
+        $this->offload();
+
         $dirtyByPriority = [];
         $workDone = ['add' => 0, 'delete' => 0];
 
@@ -142,31 +239,30 @@ class Filesystem
         ksort($dirtyByPriority);
 
         foreach ($dirtyByPriority as $priority => $subStore) {
-            $putters = [];
-            $unlink = [];
-
             foreach ($subStore as $file => $details) {
-                if ($details->content !== null) {
-                    $export = $details->binary ? $details->content : json_encode($details->content, JSON_UNESCAPED_SLASHES);
-                    $putters[] = (new FilePutter($file, $export, $this->tmpDir))->prepare();
+                if ($details->tmpFile === ':delete') {
+                    if (is_file($file)) {
+                        unlink($file);
+                        $workDone['delete']++;
+                    }
+                } else {
+                    $dirname = dirname($file);
+
+                    if (!is_dir($dirname) && !mkdir($dirname, 0777, true)) {
+                        throw new Exception($this->generateErrorMessage($file, 'mkdir'));
+                    }
+
+                    if (!rename($details->tmpFile, $file)) {
+                        throw new Exception($this->generateErrorMessage($file, 'rename'));
+                    }
+
                     $workDone['add']++;
-                } elseif (is_file($file)) {
-                    $unlink[] = $file;
-                    $workDone['delete']++;
                 }
-            }
 
-            foreach ($putters as $putter) {
-                $putter->execute();
+                // $details->tmpFile = null;
+                // $details->dirty = false;
+                unset($this->store[$file]);
             }
-
-            foreach ($unlink as $file) {
-                unlink($file);
-            }
-        }
-
-        foreach ($this->store as $file => $details) {
-            $details->dirty = false;
         }
 
         if (defined('JARS_VERBOSE') && JARS_VERBOSE && ($workDone['delete'] + $workDone['add'])) {
@@ -179,25 +275,66 @@ class Filesystem
         return $this;
     }
 
+    private function promptOffload(): self
+    {
+        if ($this->inMemory >= $this->limit()) {
+            if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                error_log("Filesystem swollen with [$this->inMemory] files, time to offload to disk");
+            }
+
+            $this->offload();
+
+            if ($this->inMemory !== 0) {
+                throw new Exception('inMemory not zero after offload');
+            }
+
+            if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                error_log("Offloaded");
+            }
+        }
+
+        return $this;
+    }
+
     public function put(string $file, $content, bool $binary = false, int $priority = 100)
     {
+        if (@$this->store[$file]->content !== null) {
+            $this->inMemory--;
+        }
+
+        if ($oldTmpFile = @$this->store[$file]->tmpFile) {
+            unlink($oldTmpFile);
+        }
+
         $this->store[$file] = (object) [
+            'binary' => $binary,
             'content' => $content,
             'dirty' => true,
             'priority' => $priority,
-            'binary' => $binary,
+            'tmpFile' => null,
         ];
+
+        if ($this->store[$file]->content !== null) {
+            $this->inMemory++;
+        }
+
+        $this->promptOffload();
     }
 
     public function reset(): self
     {
         $this->store = [];
+        $this->inMemory = 0;
 
         return $this;
     }
 
     public function revert(string $file): self
     {
+        if (@$this->store[$file]->content !== null) {
+            $this->inMemory--;
+        }
+
         unset($this->store[$file]);
 
         return $this;

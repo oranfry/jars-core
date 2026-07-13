@@ -83,11 +83,6 @@ class Record
         }
     }
 
-    public function x__toString(): string
-    {
-        return $this->export();
-    }
-
     public function __unset(string $property)
     {
         if ($this->data !== null) {
@@ -160,23 +155,6 @@ class Record
         return $contents !== false;
     }
 
-    private function export()
-    {
-        if ($this->data === null) {
-            $this->load();
-        }
-
-        if ($this->deleted) {
-            return false;
-        }
-
-        if ($this->isBinary()) {
-            return $this->data['content'];
-        }
-
-        return (object) $this->data;
-    }
-
     public function init()
     {
         $this->data = [];
@@ -184,7 +162,7 @@ class Record
 
     public function isBinary(): bool
     {
-        return $this->format == 'binary';
+        return $this->format === 'binary';
     }
 
     private function load()
@@ -198,7 +176,7 @@ class Record
             $this->data = ['content' => $content];
         } else {
             if (!is_object($content)) {
-                throw new Exception('Invalid JSON found in a record file [' . $file . ']');
+                    throw new Exception('Invalid JSON found in a record file [' . $file . ']');
             }
 
             $this->data = (array) $content;
@@ -274,7 +252,11 @@ class Record
         if ($this->dirty) {
             $this->jars->filesystem()->put(
                 $this->writeFile(),
-                $this->export(),
+                match(true) {
+                    $this->deleted => false,
+                    $this->isBinary() => $this->data['content'],
+                    default => (object) $this->data,
+                },
                 $this->isBinary(),
             );
         }

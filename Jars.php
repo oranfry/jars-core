@@ -1136,16 +1136,11 @@ class Jars implements \OranFry\Jars\Contract\Client
                 }
 
                 foreach ($changes as $id => $change) {
-                    if ($count && ($count === $numChanges || !($count % 10000))) {
-                        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                            $now = microtime(true);
-                            $delta = number_format($now - $starttime, 4);
-                            $starttime = $now;
-                            $percent = number_format(($count / $numChanges) * 100, 2);
-                            error_log("    $delta Processing change [ " . str_pad($count, $numChangesStrLen, ' ', STR_PAD_LEFT) . " / $numChanges ] " . str_pad($percent, 5, ' ', STR_PAD_LEFT) . "% $change->sign:$change->table/$id");
-                        }
-
-                        $this->filesystem->persist()->reset();
+                    if (defined('JARS_VERBOSE') && JARS_VERBOSE && $count && ($count === $numChanges || !($count % 1000))) {
+                        $now = microtime(true);
+                        $delta = number_format($now - $starttime, 4) . ' s';
+                        $percent = number_format(($count / $numChanges) * 100, 2);
+                        error_log("    $delta Processing change [ " . str_pad($count, $numChangesStrLen, ' ', STR_PAD_LEFT) . " / $numChanges ] " . str_pad($percent, 5, ' ', STR_PAD_LEFT) . "% $change->sign:$change->table/$id");
                     }
 
                     $count++;
