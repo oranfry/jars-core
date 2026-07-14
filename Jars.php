@@ -150,8 +150,10 @@ class Jars implements \OranFry\Jars\Contract\Client
             }
         }
 
-        $this->filesystem->put($this->metaFile($this->head + 1), $meta);
-        $this->filesystem->put($this->pointerFile($this->head + 1), $this->pointer + $this->numIssued);
+        $this->filesystem->put($this->versionInfoFile($this->head + 1), (object) [
+            'pointer' => $this->pointer + $this->numIssued,
+            'meta' => $meta,
+        ]);
 
         $this->filesystem->put(
             $this->masterFile($this->head + 1),
@@ -385,11 +387,21 @@ class Jars implements \OranFry\Jars\Contract\Client
 
     private function getMeta(int $version): array
     {
-        if (!$meta = $this->filesystem->get($this->metaFile($version))) {
-            throw new Exception("No meta for version $version");
+        return $this->getVersionInfo($version)->meta;
+    }
+
+    private function getPointer(int $version): int
+    {
+        return $this->getVersionInfo($version)->pointer;
+    }
+
+    private function getVersionInfo(int $version): object
+    {
+        if (!$info = $this->filesystem->get($this->versionInfoFile($version))) {
+            throw new Exception("No version info for $version");
         }
 
-        return $meta;
+        return $info;
     }
 
     public function group(string $report_name, string $group = '', int|true|null $min_version = null)
@@ -822,12 +834,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             $this->head = $this->filesystem->get($this->touch_file()) ?? 0;
         }
 
-        if ($this->head === 0) {
-            $this->pointer = 1;
-        } else {
-            $contents = $this->filesystem->get($this->pointerFile($this->head));
-            $this->pointer = intval(trim($contents));
-        }
+        $this->pointer = $this->head === 0 ? 1 : $this->getPointer($this->head);
     }
 
     public function lockPrimary(): ?string
@@ -915,11 +922,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         ), $meta)));
     }
 
-    private function metaFile(int $version): string
+    private function versionInfoFile(int $version): string
     {
         return $this->dataFile(
             hash('sha256', 'version-' . $version),
-            'meta',
+            'version',
         );
     }
 
@@ -944,14 +951,6 @@ class Jars implements \OranFry\Jars\Contract\Client
         $this->filesystem->persist();
 
         return $this;
-    }
-
-    private function pointerFile(int $version): string
-    {
-        return $this->dataFile(
-            hash('sha256', 'version-' . $version),
-            'pointer',
-        );
     }
 
     public function preview(array $lines, ?int $base_version = null): array
