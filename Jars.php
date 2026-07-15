@@ -1139,7 +1139,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                         $now = microtime(true);
                         $delta = number_format($now - $starttime, 4) . ' s';
                         $percent = number_format(($count / $numChanges) * 100, 2);
-                        error_log("    $delta Processing change [ " . str_pad($count, $numChangesStrLen, ' ', STR_PAD_LEFT) . " / $numChanges ] " . str_pad($percent, 5, ' ', STR_PAD_LEFT) . "% $change->sign:$change->table/$id");
+                        error_log("    $delta Processing change [ " . str_pad($count, $numChangesStrLen, ' ', STR_PAD_LEFT) . " / $numChanges ] " . str_pad($percent, 5, ' ', STR_PAD_LEFT) . "%");
                     }
 
                     $count++;

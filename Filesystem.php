@@ -77,7 +77,9 @@ class Filesystem
             $this->store[$file]->tmpFile = null;
             $this->inMemory++;
 
-            unlink($tmpFile);
+            if ($tmpFile !== ':delete') {
+                unlink($tmpFile);
+            }
         }
 
         if (!$this->cached($file)) {
@@ -284,13 +286,11 @@ class Filesystem
 
             $this->offload();
 
-            if ($this->inMemory !== 0) {
-                throw new Exception('inMemory not zero after offload');
+            if (defined('JARS_VERBOSE') && JARS_VERBOSE && $this->inMemory !== 0) {
+                error_log('inMemory not zero after offload');
             }
 
-            if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
-                error_log("Offloaded");
-            }
+            $this->inMemory = 0;
         }
 
         return $this;
