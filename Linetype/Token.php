@@ -2,7 +2,7 @@
 
 namespace OranFry\Jars\Core\Linetype;
 
-class token extends \OranFry\Jars\Core\Linetype
+class Token extends \OranFry\Jars\Core\Linetype
 {
     function __construct()
     {
