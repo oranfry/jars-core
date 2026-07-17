@@ -504,8 +504,6 @@ class Linetype
                         'right' => (@$parent->reverse ? $oldline->$alias : $line->id),
                         'tablelink' => $parent->tablelink,
                         'table' => $parent_table,
-                        'record' => Record::of($this->jars, $parent_table, $line->$alias),
-                        'oldrecord' => Record::of($this->jars, $parent_table, $line->$alias),
                         'oldlinks' => [],
                     ];
 
