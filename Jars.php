@@ -1099,7 +1099,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                             ];
                         }
 
-                        if (@$changes[$id]->sign === '+' && $sign === '-') {
+                        if (($changes[$id]->sign ?? '+') === '+' && $sign === '-') {
                             // added and deleted; line has no effect
                             unset($changes[$id]);
                         } elseif (!isset($changes[$id]->sign) || $changes[$id]->sign !== '+' || $sign !== '~') {
