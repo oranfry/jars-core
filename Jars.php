@@ -1075,6 +1075,8 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $relatives = [];
 
                     for ($version = $greyhound; $version <= $bunny - 1; $version++) {
+                        $forRemoval = [];
+
                         foreach ($this->getMeta($version + 1) as $meta) {
                             // connection
 
@@ -1104,13 +1106,17 @@ class Jars implements \OranFry\Jars\Contract\Client
                                 ];
                             }
 
-                            if (($changes[$id]->sign ?? '+') === '+' && $sign === '-') {
+                            if (@$changes[$id]->sign === '+' && $sign === '-') {
                                 // added and deleted; line has no effect
-                                unset($changes[$id]);
+                                $forRemoval[$id] = true;
                             } elseif (!isset($changes[$id]->sign) || $changes[$id]->sign !== '+' || $sign !== '~') {
                                 // update sign, except plus to updated
                                 $changes[$id]->sign = $sign;
                             }
+                        }
+
+                        foreach (array_keys($forRemoval) as $id) {
+                            unset($changes[$id]);
                         }
                     }
 
