@@ -68,6 +68,8 @@ class Filesystem
     public function get(string $file, bool $binary = false)
     {
         if ($tmpFile = $this->store[$file]->tmpFile ?? null) {
+            $this->promptOffload();
+
             $this->store[$file]->content = match (true) {
                 $tmpFile === ':delete' => null,
                 $binary => file_get_contents($tmpFile),
@@ -173,6 +175,8 @@ class Filesystem
         foreach ($this->store as $file => $details) {
             if (!$details->dirty) {
                 unset($this->store[$file]);
+                $this->inMemory--;
+                continue;
             }
 
             if ($details->tmpFile) {
