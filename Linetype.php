@@ -809,6 +809,7 @@ class Linetype
         string $timestamp,
         object $line,
         ?int $base_version,
+        int $head,
         array &$affecteds,
         array &$commits,
         ?string $ignorelink = null,
@@ -861,7 +862,7 @@ class Linetype
 
             if (is_array(@$line->_adopt->{$child->property})) {
                 foreach ($line->_adopt->{$child->property} as $child_id) {
-                    $child_record = Record::of($this->jars, $child_linetype->table, $child_id);
+                    $child_record = Record::of($this->jars, $child_linetype->table, $head, $child_id);
                     $child_record->assertExistence();
 
                     $affecteds[] = (object) [
@@ -879,7 +880,7 @@ class Linetype
 
             if (is_array(@$line->_disown->{$child->property})) {
                 foreach ($line->_disown->{$child->property} as $child_id) {
-                    $child_record = Record::of($this->jars, $child_linetype->table, $child_id);
+                    $child_record = Record::of($this->jars, $child_linetype->table, $head, $child_id);
                     $child_record->assertExistence();
 
                     $affecteds[] = (object) [

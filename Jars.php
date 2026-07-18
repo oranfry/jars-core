@@ -658,6 +658,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $timestamp,
                     $line,
                     $base_version,
+                    $this->head,
                     $affecteds,
                     $commits,
                     $ignorelink,
