@@ -1049,6 +1049,8 @@ class Jars implements \OranFry\Jars\Contract\Client
             $all_reports = array_keys($this->config->reports());
             $unaffected_reports = array_flip($all_reports);
 
+            $change_clumps = [];
+
             foreach ($all_reports as $report_name) {
                 $report = $this->report($report_name);
 
@@ -1066,59 +1068,67 @@ class Jars implements \OranFry\Jars\Contract\Client
                     error_log("Refreshing report $report_name [$greyhound → $bunny]");
                 }
 
-                $changes = [];
-                $relatives = [];
+                $clump_key = $greyhound . '~' . $bunny;
 
-                for ($version = $greyhound; $version <= $bunny - 1; $version++) {
-                    foreach ($this->getMeta($version + 1) as $meta) {
-                        // connection
+                if (!isset($change_clumps[$clump_key])) {
+                    $changes = [];
+                    $relatives = [];
 
-                        if (preg_match('/^>/', $meta)) {
-                            continue;
-                        }
+                    for ($version = $greyhound; $version <= $bunny - 1; $version++) {
+                        foreach ($this->getMeta($version + 1) as $meta) {
+                            // connection
 
-                        // disconnection - keep track of linked record ids
+                            if (preg_match('/^>/', $meta)) {
+                                continue;
+                            }
 
-                        if (preg_match('/^<([^:,]+):([^:,]+),([^:,]+)$/', $meta, $matches)) {
-                            [, $tablelink, $left, $right] = $matches;
+                            // disconnection - keep track of linked record ids
 
-                            $relatives[$tablelink]['forth'][$left][] = $right;
-                            $relatives[$tablelink]['back'][$right][] = $left;
-                            continue;
-                        }
+                            if (preg_match('/^<([^:,]+):([^:,]+),([^:,]+)$/', $meta, $matches)) {
+                                [, $tablelink, $left, $right] = $matches;
 
-                        if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
-                            throw new Exception('Invalid meta line: ' . $meta);
-                        }
+                                $relatives[$tablelink]['forth'][$left][] = $right;
+                                $relatives[$tablelink]['back'][$right][] = $left;
+                                continue;
+                            }
 
-                        [, $sign, $table, $id] = $matches;
+                            if (!preg_match('/^([+-~])([a-z_]+):([a-zA-Z0-9+\/=]+)$/', $meta, $matches)) {
+                                throw new Exception('Invalid meta line: ' . $meta);
+                            }
 
-                        if (!isset($changes[$id])) {
-                            $changes[$id] = (object) [
-                                'table' => $table,
-                            ];
-                        }
+                            [, $sign, $table, $id] = $matches;
 
-                        if (($changes[$id]->sign ?? '+') === '+' && $sign === '-') {
-                            // added and deleted; line has no effect
-                            unset($changes[$id]);
-                        } elseif (!isset($changes[$id]->sign) || $changes[$id]->sign !== '+' || $sign !== '~') {
-                            // update sign, except plus to updated
-                            $changes[$id]->sign = $sign;
+                            if (!isset($changes[$id])) {
+                                $changes[$id] = (object) [
+                                    'table' => $table,
+                                ];
+                            }
+
+                            if (($changes[$id]->sign ?? '+') === '+' && $sign === '-') {
+                                // added and deleted; line has no effect
+                                unset($changes[$id]);
+                            } elseif (!isset($changes[$id]->sign) || $changes[$id]->sign !== '+' || $sign !== '~') {
+                                // update sign, except plus to updated
+                                $changes[$id]->sign = $sign;
+                            }
                         }
                     }
+
+                    // propagate
+
+                    if ($greyhound) {
+                        foreach ($changes as $id => $change) {
+                            $this->propagate_r($change->table, $id, $bunny, $relatives, $changes);
+                        }
+                    }
+
+                    $change_clumps[$clump_key] = $changes;
                 }
+
+                $change = $change_clumps[$clump_key];
 
                 $lines_cache = [];
                 $childsets = [];
-
-                // propagate
-
-                if ($greyhound) {
-                    foreach ($changes as $id => $change) {
-                        $this->propagate_r($change->table, $id, $bunny, $relatives, $changes);
-                    }
-                }
 
                 $report_affected = false;
 
