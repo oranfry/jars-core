@@ -1,6 +1,6 @@
 <?php
 
-namespace OranFry\Jars\Core\Linetype;
+namespace OranFry\Jars\Core\Linetypes;
 
 class Token extends \OranFry\Jars\Core\Linetype
 {
