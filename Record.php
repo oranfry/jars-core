@@ -95,7 +95,7 @@ class Record
         if (!$this->exists()) {
             $readFile = $this->readFile() ?? '[none]';
 
-            throw new Exception("import_r: No such record: $this->table/$this->id@$this->version ($readfile)");
+            throw new Exception("import_r: No such record: $this->table/$this->id@$this->version ($readFile)");
         }
     }
 
