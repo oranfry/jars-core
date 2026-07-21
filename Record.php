@@ -93,7 +93,9 @@ class Record
     public function assertExistence()
     {
         if (!$this->exists()) {
-            throw new Exception("import_r: No such record: {$this->table}/{$this->id}");
+            $readFile = $this->readFile() ?? '[none]';
+
+            throw new Exception("import_r: No such record: $this->table/$this->id@$this->version ($readfile)");
         }
     }
 
