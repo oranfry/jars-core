@@ -4,9 +4,6 @@ namespace OranFry\Jars\Core;
 
 class Link
 {
-    static array $register = [];
-    static array $proposed = [];
-
     private ?array $data = null;
     private bool $dirty = false;
     private ?string $file = null;

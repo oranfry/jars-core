@@ -28,8 +28,6 @@ class Jars implements \OranFry\Jars\Contract\Client
 
     private array $recordStore = [];
     private array $linkStore = [];
-    private array $proposedRecordStore = [];
-    private array $proposedLinkStore = [];
 
     public function __clone()
     {
@@ -108,6 +106,14 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
 
         return [''];
+    }
+
+    private function clearStores(): self
+    {
+        $this->recordStore = [];
+        $this->linkStore = [];
+
+        return $this;
     }
 
     private function commit(string $timestamp, array $commits, array $meta, ?int $base_version): void
@@ -487,6 +493,8 @@ class Jars implements \OranFry\Jars\Contract\Client
             }
 
             throw $e;
+        } finally {
+            $this->clearStores();
         }
     }
 

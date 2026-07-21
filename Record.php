@@ -6,9 +6,6 @@ use OranFry\Jars\Contract\Exception;
 
 class Record
 {
-    static array $register = [];
-    static array $proposed = [];
-
     private ?array $data = null;
     private bool $dirty = false;
     private bool $deleted = false;
