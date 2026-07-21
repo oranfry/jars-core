@@ -35,6 +35,8 @@ class Filesystem
                 error_log(spl_object_id($this) .  ' Lossy filesystem destruction: ' . $file);
             }
         }
+
+        $this->unlinkTmpFiles();
     }
 
     public function cached(string $file)
@@ -347,13 +349,7 @@ class Filesystem
 
     public function reset(): self
     {
-        foreach ($this->store as $file => $details) {
-            $tmpFile = $details->tmpFile;
-
-            if ($tmpFile !== null && $tmpFile !== ':delete') {
-                @unlink($tmpFile);
-            }
-        }
+        $this->unlinkTmpFiles();
 
         $this->store = [];
         $this->inMemory = 0;
@@ -368,6 +364,17 @@ class Filesystem
         }
 
         unset($this->store[$file]);
+
+        return $this;
+    }
+
+    private function unlinkTmpFiles(): self
+    {
+        foreach ($this->store as $file => $details) {
+            if ($details->tmpFile !== null && $details->tmpFile !== ':delete') {
+                @unlink($details->tmpFile);
+            }
+        }
 
         return $this;
     }
