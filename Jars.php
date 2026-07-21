@@ -942,6 +942,20 @@ class Jars implements \OranFry\Jars\Contract\Client
         return hash('sha256', hex2bin(hash('sha256', $n . '--' . $sequence->secret())));
     }
 
+    public static function numberToSiSuffix(int $number): string
+    {
+        $suffixes = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
+        $power = floor(log(abs($number), 1000));
+        
+        // Handle numbers less than 1 (no suffix)
+        if ($power < 1 || !isset($suffixes[$power])) {
+            return number_format($number);
+        }
+        
+        $num = $number / pow(1000, $power);
+        return number_format($num, 1) . $suffixes[$power];
+    }
+
     public static function of(Config $config, string $db_home): self
     {
         return new Jars($config, $db_home);

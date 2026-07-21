@@ -68,6 +68,10 @@ class Filesystem
     public function get(string $file, bool $binary = false)
     {
         if ($tmpFile = $this->store[$file]->tmpFile ?? null) {
+            if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+                error_log('Pulling back from tmp space [' . $file . ']');
+            }
+
             $this->promptOffload();
 
             $this->store[$file]->content = match (true) {
@@ -172,6 +176,14 @@ class Filesystem
 
     private function offload(): void
     {
+        $before = memory_get_usage();
+
+        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+            error_log('Memory usage before: ' . Jars::numberToSiSuffix($before) . 'B');
+        }
+
+        $saving = 0;
+
         foreach ($this->store as $file => $details) {
             if (!$details->dirty) {
                 unset($this->store[$file]);
@@ -198,6 +210,7 @@ class Filesystem
                 }
 
                 $export = $details->binary ? $details->content : json_encode($details->content, JSON_UNESCAPED_SLASHES);
+                $saving += strlen($export);
 
                 if (fwrite($handle, $export) === false) {
                     throw new Exception($this->generateErrorMessage($tmpFile, 'fwrite'));
@@ -217,6 +230,13 @@ class Filesystem
             }
 
             $details->content = null;
+        }
+
+        if (defined('JARS_VERBOSE') && JARS_VERBOSE) {
+            error_log('Offloaded ' . Jars::numberToSiSuffix($saving) . 'B to disk');
+
+            $diff = $before - ($after = memory_get_usage());
+            error_log('Memory usage after: ' . Jars::numberToSiSuffix($after) . 'B (saved ' . Jars::numberToSiSuffix($diff) . 'B)');
         }
     }
 
@@ -291,7 +311,7 @@ class Filesystem
             $this->offload();
 
             if (defined('JARS_VERBOSE') && JARS_VERBOSE && $this->inMemory !== 0) {
-                error_log('inMemory not zero after offload');
+                error_log('inMemory not zero after offload [' . $this->inMemory . ']');
             }
 
             $this->inMemory = 0;
