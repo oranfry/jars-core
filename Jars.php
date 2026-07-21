@@ -462,7 +462,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
-        if ($iLock = !$dryrun && !$this->locker->isPrimaryLocked()) {
+        if (!$dryrun) {
             $pin = $this->lockPrimary();
             $this->head = $this->locker->head();
         }
@@ -476,13 +476,13 @@ class Jars implements \OranFry\Jars\Contract\Client
         try {
             $result = $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
 
-            if ($iLock) {
+            if (!$dryrun) {
                 $this->unlockPrimary($pin, $this->head);
             }
 
             return $result;
         } catch (\Exception $e) {
-            if ($iLock) {
+            if (!$dryrun) {
                 $this->unlockPrimary($pin);
             }
 
@@ -838,12 +838,12 @@ class Jars implements \OranFry\Jars\Contract\Client
         $this->pointer = $this->head === 0 ? 1 : $this->getPointer($this->head);
     }
 
-    public function lockPrimary(): ?string
+    private function lockPrimary(): ?string
     {
         return $this->locker->lockPrimary();
     }
 
-    public function lockReports(): ?string
+    private function lockReports(): ?string
     {
         return $this->locker->lockReports();
     }
@@ -1248,9 +1248,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             $this->filesystem->persist()->reset();
         } finally {
-            if (isset($pin)) {
-                $this->unlockReports($pin);
-            }
+            $this->unlockReports($pin);
         }
 
         return $bunny;

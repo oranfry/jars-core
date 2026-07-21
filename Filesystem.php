@@ -327,6 +327,14 @@ class Filesystem
 
     public function reset(): self
     {
+        foreach ($this->store as $file => $details) {
+            $tmpFile = $details->tmpFile;
+
+            if ($tmpFile !== null && $tmpFile !== ':delete') {
+                @unlink($tmpFile);
+            }
+        }
+
         $this->store = [];
         $this->inMemory = 0;
 

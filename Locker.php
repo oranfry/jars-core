@@ -40,7 +40,7 @@ class Locker
     private function lock(string $file, ?string $contents = null): ?object
     {
         if (isset($this->locks[$file])) {
-            return null; // locked by a higher-level import
+            throw new Exception('Attempt to lock when already locked [' . $file . ']');
         }
 
         @mkdir(dirname($file), 0777, true);
@@ -50,13 +50,13 @@ class Locker
         // TODO: Implement timeout using non-blocking locking in a loop until
 
         if (!($lock->handle = fopen($file, 'c+'))) {
-            throw new Exception('Could not open the touch file');
+            throw new Exception('Could not open the lock file [' . $file . ']');
         }
 
         if (!flock($lock->handle, LOCK_EX)) {
             fclose($lock->handle);
 
-            throw new Exception('Could not acquire a lock over the touch file');
+            throw new Exception('Could not acquire a lock over the lock file [' . $file . ']');
         }
 
         $contents = fgets($lock->handle);
