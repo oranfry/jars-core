@@ -382,13 +382,13 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $line;
     }
 
-    public function get_childset(string $linetype_name, string $id, string $property): array
+    public function get_childset(string $linetype_name, string $id, string $property, int $version, ?array &$lines_cache = null): array
     {
         if (!$this->verify_token($this->token())) {
             throw new BadTokenException;
         }
 
-        return $this->linetype($linetype_name)->get_childset($this->token, $id, $this->head, $property, $lines_cache);
+        return $this->linetype($linetype_name)->get_childset($this->token, $id, $version, $property, $lines_cache);
     }
 
     private function getMeta(int $version): array
@@ -779,7 +779,7 @@ class Jars implements \OranFry\Jars\Contract\Client
         $this->listeners[] = $listener;
     }
 
-    private function load_children_r(object $line, array $children, array &$childsets, ?array &$lines_cache = null): void
+    private function load_children_r(object $line, array $children, int $version, array &$childsets, ?array &$lines_cache = null): void
     {
         foreach ($children as $property => $child) {
             if (is_numeric($property)) {
@@ -800,7 +800,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             $line_childsets = &$linetype_childsets[$line->id];
 
             if (!isset($line_childsets[$property])) {
-                $line_childsets[$property] = $this->get_childset($line->type, $line->id, $property, $lines_cache);
+                $line_childsets[$property] = $this->get_childset($line->type, $line->id, $property, $version, $lines_cache);
             }
 
             $childset = $line_childsets[$property];
@@ -819,7 +819,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                 }
 
                 foreach ($childset as $childline) {
-                    $this->load_children_r($childline, $child->children, $childsets, $lines_cache);
+                    $this->load_children_r($childline, $child->children, $version, $childsets, $lines_cache);
                 }
             }
 
@@ -1215,12 +1215,12 @@ class Jars implements \OranFry\Jars\Contract\Client
                             }
 
                             if (!isset($lines_cache[$linetype_name][$id])) {
-                                $lines_cache[$linetype_name][$id] = $this->get($linetype_name, $id);
+                                $lines_cache[$linetype_name][$id] = $this->linetype($linetype_name)->get($this->token, $id, $bunny);
                             }
 
                             $line = clone $lines_cache[$linetype_name][$id];
 
-                            $this->load_children_r($line, @$listen->children ?? [], $childsets, $lines_cache);
+                            $this->load_children_r($line, @$listen->children ?? [], $bunny, $childsets, $lines_cache);
 
                             try {
                                 $current_groups = static::classify($line, $listen, $report);
@@ -1233,6 +1233,7 @@ class Jars implements \OranFry\Jars\Contract\Client
 
                         if (in_array($change->sign, ['-', '~', '*'])) {
                             $oldline = $this->linetype($linetype_name)->get($this->token, $id, $greyhound);
+                            $this->load_children_r($oldline, @$listen->children ?? [], $greyhound, $childsets);
                             $past_groups = static::classify($oldline, $listen, $report);
                         }
 
