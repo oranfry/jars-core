@@ -470,7 +470,9 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         $this->filesystem = (new Filesystem($this->db_path('tmpP')));
 
-        if (!$dryrun) {
+        if ($dryrun) {
+            $this->loadVersionInfo(true);
+        } else {
             $pin = $this->lockPrimary();
             $this->head = $this->locker->head();
             $this->filesystem->blastTmp();
@@ -843,9 +845,9 @@ class Jars implements \OranFry\Jars\Contract\Client
         }
     }
 
-    private function loadVersionInfo(): void
+    private function loadVersionInfo(bool $force = false): void
     {
-        if ($this->head === null) {
+        if ($force || $this->head === null) {
             $this->head = $this->filesystem->get($this->touch_file()) ?? 0;
         }
 
