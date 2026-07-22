@@ -9,7 +9,7 @@ class Filesystem
     const DEFAULT_LIMIT = 500;
 
     private array $store = [];
-    private string $tmpDir;
+    private ?string $tmpDir;
     private int $inMemory = 0;
 
     public function __clone()
@@ -23,7 +23,7 @@ class Filesystem
         $this->store = $store;
     }
 
-    public function __construct(string $tmpDir)
+    public function __construct(?string $tmpDir = null)
     {
         $this->tmpDir = $tmpDir;
     }
@@ -37,6 +37,13 @@ class Filesystem
         }
 
         $this->unlinkTmpFiles();
+    }
+
+    public function blastTmp(): self
+    {
+        shell_exec("rm -rf '$this->tmpDir'");
+
+        return $this;
     }
 
     public function cached(string $file)
@@ -324,6 +331,10 @@ class Filesystem
 
     public function put(string $file, $content, bool $binary = false, int $priority = 100)
     {
+        if (!$this->tmpDir) {
+            throw new Exception('Attempt to put files but no tmpDir is set');
+        }
+
         if (@$this->store[$file]->content !== null) {
             $this->inMemory--;
         }

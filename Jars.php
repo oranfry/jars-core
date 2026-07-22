@@ -38,7 +38,7 @@ class Jars implements \OranFry\Jars\Contract\Client
     {
         $this->config = $config;
         $this->db_home = $db_home;
-        $this->filesystem = new Filesystem($this->db_path('tmp'));
+        $this->filesystem = new Filesystem();
         $this->locker = new Locker($this->touch_file(), $this->reports_lock_file());
 
         if (!($this->config->linetypes()['token'] ?? null)) {
@@ -468,9 +468,12 @@ class Jars implements \OranFry\Jars\Contract\Client
             throw new BadTokenException;
         }
 
+        $this->filesystem = (new Filesystem($this->db_path('tmpP')));
+
         if (!$dryrun) {
             $pin = $this->lockPrimary();
             $this->head = $this->locker->head();
+            $this->filesystem->blastTmp();
         }
 
         // we have the floor!
@@ -483,18 +486,21 @@ class Jars implements \OranFry\Jars\Contract\Client
             $result = $this->_import($timestamp, $lines, $base_version, $dryrun, $logging, $differential);
 
             if (!$dryrun) {
+                $this->filesystem->blastTmp();
                 $this->unlockPrimary($pin, $this->head);
             }
 
             return $result;
         } catch (\Exception $e) {
             if (!$dryrun) {
+                $this->filesystem->blastTmp();
                 $this->unlockPrimary($pin);
             }
 
             throw $e;
         } finally {
             $this->clearStores();
+            $this->filesystem = new Filesystem();
         }
     }
 
@@ -846,12 +852,12 @@ class Jars implements \OranFry\Jars\Contract\Client
         $this->pointer = $this->head === 0 ? 1 : $this->getPointer($this->head);
     }
 
-    private function lockPrimary(): ?string
+    private function lockPrimary(): string
     {
         return $this->locker->lockPrimary();
     }
 
-    private function lockReports(): ?string
+    private function lockReports(): string
     {
         return $this->locker->lockReports();
     }
@@ -1060,6 +1066,9 @@ class Jars implements \OranFry\Jars\Contract\Client
         $pin = $this->lockReports();
 
         // we have the floor!
+
+        $this->filesystem = (new Filesystem($this->db_path('tmpR')))
+            ->blastTmp();
 
         try {
             $this->loadVersionInfo();
@@ -1270,7 +1279,9 @@ class Jars implements \OranFry\Jars\Contract\Client
 
             $this->filesystem->persist()->reset();
         } finally {
+            $this->filesystem->blastTmp();
             $this->unlockReports($pin);
+            $this->filesystem = new Filesystem();
         }
 
         return $bunny;
