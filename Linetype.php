@@ -313,7 +313,7 @@ class Linetype
         }
 
         $childset = [];
-        $link = Link::of($this->jars, $child->tablelink, $version, $id, @$child->reverse);
+        $link = Link::of($this->jars, $child->tablelink, $version, $id, $child->reverse ?? false);
 
         if ($child_ids = $link->relatives()) {
             $childlinetype = $this->jars->linetype($child->linetype);
@@ -343,9 +343,10 @@ class Linetype
         ?int $base_version,
         &$affecteds,
         &$commits,
-        $ignorelink = null,
-        ?int $logging = null,
-        bool $differential = false,
+        $ignorelink,
+        ?int $logging,
+        bool $differential,
+        bool $dryrun,
     ): void {
         $this->jars->trigger('importline', $this->table);
 
@@ -399,7 +400,7 @@ class Linetype
                 echo str_repeat(' ', $logging * 4) . $verb . '[' . $this->table . ':' . $line->id . ']' . "\n";
             }
 
-            $record = Record::propose($this->jars, $this->table, $head + 1, $line->id);
+            $record = Record::propose($this->jars, $this->table, $head + 1, $line->id, $dryrun);
 
             if (!$was) {
                 $record->init();
@@ -442,7 +443,7 @@ class Linetype
             }
 
             foreach ($this->children as $child) {
-                $link = Link::of($this->jars, $child->tablelink, $head, $line->id, @$child->reverse);
+                $link = Link::of($this->jars, $child->tablelink, $head, $line->id, $child->reverse ?? false);
 
                 if (@$child->cascade_delete) {
                     $this->jars->import_r(
@@ -454,6 +455,7 @@ class Linetype
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
                         $differential,
+                        $dryrun,
                     );
                 } else {
                     foreach ($link->relatives() as $child_id) {
@@ -523,7 +525,7 @@ class Linetype
                         'right' => (@$parent->reverse ? $line->$alias : $line->id),
                         'tablelink' => $parent->tablelink,
                         'table' => $parent_table,
-                        'record' => Record::propose($this->jars, $parent_table, $head + 1, $line->$alias),
+                        'record' => Record::propose($this->jars, $parent_table, $head + 1, $line->$alias, $dryrun),
                         'oldrecord' => Record::of($this->jars, $parent_table, $head, $line->$alias),
                         'oldlinks' => [],
                     ];
@@ -548,7 +550,7 @@ class Linetype
 
             $child_linetype = $this->jars->linetype($child->linetype);
             $oldchild = null;
-            $link = Link::of($this->jars, $child->tablelink, $head, $line->id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $head, $line->id, $child->reverse ?? false);
 
             if ($oldchild_id = $link->firstChild()) {
                 $oldchild = Record::of($this->jars, $child_linetype->table, $head, $oldchild_id);
@@ -582,6 +584,7 @@ class Linetype
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
                         $differential,
+                        $dryrun,
                     );
 
                     $affecteds[] = (object) [
@@ -613,6 +616,7 @@ class Linetype
                         $child->tablelink,
                         $logging !== null ? $logging + 1 : null,
                         $differential,
+                        $dryrun,
                     );
                 }
             }
@@ -702,7 +706,7 @@ class Linetype
             }
 
             $childpath = ($path != '/' ? $path : null) . '/'  . $child->property;
-            $link = Link::of($this->jars, $child->tablelink, $version, $id, @$child->reverse);
+            $link = Link::of($this->jars, $child->tablelink, $version, $id, $child->reverse ?? false);
 
             if ($child_ids = $link->relatives()) {
                 $childlinetype = $this->jars->linetype($child->linetype);
@@ -812,9 +816,10 @@ class Linetype
         int $head,
         array &$affecteds,
         array &$commits,
-        ?string $ignorelink = null,
-        ?int $logging = null,
-        bool $differential = false
+        ?string $ignorelink,
+        ?int $logging,
+        bool $differential,
+        bool $dryrun,
     ) {
         // recurse to normal children
 
@@ -845,6 +850,7 @@ class Linetype
                     null,
                     $logging !== null ? $logging + 1 : null,
                     $differential,
+                    $dryrun,
                 );
 
                 $commits[$line->id]->{$child->property} = array_filter(array_values($childcommits));

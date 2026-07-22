@@ -74,14 +74,14 @@ class Link
         return $this->name;
     }
 
-    public static function of(Jars $jars, string $name, int $version, string $id, ?bool $reverse = null): self
+    public static function of(Jars $jars, string $name, int $version, string $id, bool $reverse): self
     {
         $key = 'existing--' . $id . '--' . $name . '--' . $version . '--' . ($reverse ? 'back' : 'forth');
 
-        return $jars->linkStore($key) ?? $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse ?? false));
+        return $jars->linkStore($key) ?? $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse));
     }
 
-    public static function propose(Jars $jars, string $name, int $version, string $id, ?bool $reverse = null): self
+    public static function propose(Jars $jars, string $name, int $version, string $id, bool $reverse, bool $dryrun): self
     {
         $key = 'proposed--' . $id . '--' . $name . '--' . $version . '--' . ($reverse ? 'back' : 'forth');
 
@@ -89,9 +89,11 @@ class Link
             return $link;
         }
 
-        @unlink(self::writeFileOf($jars, $name, $version, $id, $reverse ?? false)); // first clean up any previous failed attempts to update this record
+        if (!$dryrun) {
+            @unlink(self::writeFileOf($jars, $name, $version, $id, $reverse)); // first clean up any previous failed attempts to update this record
+        }
 
-        return $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse ?? false));
+        return $jars->linkStore($key, new self($jars, $name, $version, $id, $reverse));
     }
 
     private function readFile(): ?string

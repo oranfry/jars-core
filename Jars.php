@@ -522,6 +522,7 @@ class Jars implements \OranFry\Jars\Contract\Client
             null,
             $logging,
             $differential,
+            $dryrun,
         );
 
         static::debug_pop();
@@ -531,11 +532,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         foreach ($affecteds as $affected) {
             switch ($affected->action) {
                 case 'connect':
-                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->left)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->left, false, $dryrun)
                         ->add($affected->right)
                         ->save();
 
-                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->right, true)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->right, true, $dryrun)
                         ->add($affected->left)
                         ->save();
 
@@ -544,7 +545,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     break;
 
                 case 'delete':
-                    $affected->record = Record::propose($this, $affected->table, $this->head + 1, $affected->oldrecord->id);
+                    $affected->record = Record::propose($this, $affected->table, $this->head + 1, $affected->oldrecord->id, $dryrun);
                     $affected->record->delete()->save();
 
                     $meta[] = '-' . $affected->table . ':' . $affected->id;
@@ -552,11 +553,11 @@ class Jars implements \OranFry\Jars\Contract\Client
                     break;
 
                 case 'disconnect':
-                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->left)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->left, false, $dryrun)
                         ->remove($affected->right)
                         ->save();
 
-                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->right, true)
+                    Link::propose($this, $affected->tablelink, $this->head + 1, $affected->right, true, $dryrun)
                         ->remove($affected->left)
                         ->save();
 
@@ -631,9 +632,10 @@ class Jars implements \OranFry\Jars\Contract\Client
         ?int $base_version,
         array &$affecteds,
         array &$commits,
-        ?string $ignorelink = null,
-        ?int $logging = null,
-        bool $differential = false,
+        ?string $ignorelink,
+        ?int $logging,
+        bool $differential,
+        bool $dryrun,
     ): array
     {
         if (!$this->verify_token($this->token())) {
@@ -664,6 +666,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $ignorelink,
                     $logging,
                     $differential,
+                    $dryrun,
                 );
         }
 
@@ -680,6 +683,7 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $ignorelink,
                     $logging,
                     $differential,
+                    $dryrun,
                 );
         }
 

@@ -182,14 +182,14 @@ class Record
         }
     }
 
-    public static function of(Jars $jars, string $table, int $version, ?string $id = null): self
+    public static function of(Jars $jars, string $table, int $version, string $id): self
     {
         $key = 'existing--' . $table . '--' . $id . '--' . $version;
 
         return $jars->recordStore($key) ?? $jars->recordStore($key, new self($jars, $table, $version, $id));
     }
 
-    public static function propose(Jars $jars, string $table, int $version, ?string $id = null)
+    public static function propose(Jars $jars, string $table, int $version, string $id, bool $dryrun)
     {
         $key = 'proposed--' . $table . '--' . $id . '--' . $version;
 
@@ -197,7 +197,9 @@ class Record
             return $record;
         }
 
-        @unlink(self::writeFileOf($jars, $table, $version, $id)); // first clean up any previous failed attempts to update this record
+        if (!$dryrun) {
+            @unlink(self::writeFileOf($jars, $table, $version, $id)); // first clean up any previous failed attempts to update this record
+        }
 
         return $jars->recordStore($key, new self($jars, $table, $version, $id));
     }
