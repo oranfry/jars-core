@@ -37,7 +37,7 @@ class Locker
         return $this->isLocked($this->reportsLockFile);
     }
 
-    private function lock(string $file, ?string $contents = null): ?object
+    private function lock(string $file, ?string $contents = null): object
     {
         if (isset($this->locks[$file])) {
             throw new Exception('Attempt to lock when already locked [' . $file . ']');
@@ -71,24 +71,18 @@ class Locker
         ];
     }
 
-    public function lockPrimary(): ?string
+    public function lockPrimary(): string
     {
-        if (null === $result = $this->lock($this->touchFile)) {
-            return null;
-        }
+        $result = $this->lock($this->touchFile);
 
         $this->head = intval(trim($result->contents) ?: '0');
 
         return $result->pin;
     }
 
-    public function lockReports(): ?string
+    public function lockReports(): string
     {
-        if (null === $result = $this->lock($this->reportsLockFile)) {
-            return null;
-        }
-
-        return $result->pin;
+        return $this->lock($this->reportsLockFile)->pin;
     }
 
     private function unlock(string $file, ?string $pin, ?string $contents = null): self
