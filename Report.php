@@ -17,7 +17,6 @@ abstract class Report
     // php -r '$_wt = [1, 10, 10, 10, 10, 10, 100, 200, 200, 500]; echo "    const VERSION_WAIT_TRIES = [" . implode(", ", array_map(fn ($try) => $try / array_sum($_wt), $_wt)) . "];\n";'
     const VERSION_WAIT_TRIES = [0.00095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.0095147478591817, 0.095147478591817, 0.19029495718363, 0.19029495718363, 0.47573739295909];
 
-    protected $filesystem;
     protected $jars;
     public $classify;
     public $listen = [];
@@ -44,15 +43,9 @@ abstract class Report
         return $this->jars->db_path("reports/$this->name/$basename.json");
     }
 
-    public function filesystem(?Filesystem $filesystem = null): null|Filesystem|self
+    public function filesystem(): Filesystem
     {
-        if (func_num_args()) {
-            $this->filesystem = $filesystem;
-
-            return $this;
-        }
-
-        return $this->filesystem;
+        return $this->jars->filesystem();
     }
 
     public function get(string $group, ?int $min_version = null, ?int $timeout_microseconds = null)
@@ -65,7 +58,7 @@ abstract class Report
             $this->wait_for_version($min_version, $timeout_microseconds);
         }
 
-        return $this->filesystem->get($this->file($group)) ?? static::DEFAULT_VALUE;
+        return $this->filesystem()->get($this->file($group)) ?? static::DEFAULT_VALUE;
     }
 
     public function groups(string $prefix = '', ?int $min_version = null, ?int $timeout_microseconds = null): array
@@ -78,7 +71,7 @@ abstract class Report
             $this->wait_for_version($min_version, $timeout_microseconds);
         }
 
-        return $this->filesystem->get($this->groupsfile($prefix)) ?? [];
+        return $this->filesystem()->get($this->groupsfile($prefix)) ?? [];
     }
 
     private function groupsfile(string $prefix): string
@@ -92,7 +85,7 @@ abstract class Report
             throw new Exception('Invalid group');
         }
 
-        return $this->filesystem->has($this->file($group));
+        return $this->filesystem()->has($this->file($group));
     }
 
     public function is_derived(): bool
@@ -166,7 +159,7 @@ abstract class Report
         }
 
         $groupsfile = $this->groupsfile($prefix);
-        $groups = $this->filesystem->get($groupsfile) ?? [];
+        $groups = $this->filesystem()->get($groupsfile) ?? [];
 
         if ($exists) {
             if (!in_array($subgroup, $groups)) {
@@ -179,9 +172,9 @@ abstract class Report
         }
 
         if ($exists = (bool) $groups) {
-            $this->filesystem->put($groupsfile, $groups);
+            $this->filesystem()->put($groupsfile, $groups);
         } else {
-            $this->filesystem->delete($groupsfile);
+            $this->filesystem()->delete($groupsfile);
         }
 
         $pattern = '/^(' . Constants::GROUP_PREFIX_PATTERN . ')(' . Constants::GROUP_SUB_PATTERN . ')\\/$/';
@@ -213,9 +206,9 @@ abstract class Report
         $reportfile = $this->file($group);
 
         if ($exists = (bool) $data) {
-            $this->filesystem->put($reportfile, $data);
+            $this->filesystem()->put($reportfile, $data);
         } else {
-            $this->filesystem->delete($reportfile);
+            $this->filesystem()->delete($reportfile);
         }
 
         $this->maintain_groups($group, $exists);
@@ -242,7 +235,7 @@ abstract class Report
 
     public function version(): int
     {
-        return $this->filesystem->get($this->version_file()) ?? 0;
+        return $this->filesystem()->get($this->version_file()) ?? 0;
     }
 
     public function version_file(): string
@@ -252,9 +245,9 @@ abstract class Report
 
     private function version_requirement_met(int $min_version, int $micro_delay = 0, ?string &$current_version = null)
     {
-        $current_version = $this->filesystem->get($version_file = $this->version_file());
+        $current_version = $this->filesystem()->get($version_file = $this->version_file());
 
-        $this->filesystem->forget($version_file);
+        $this->filesystem()->forget($version_file);
 
         if ($current_version >= $min_version) {
             return true;

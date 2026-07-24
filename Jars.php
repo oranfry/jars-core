@@ -1414,7 +1414,6 @@ class Jars implements \OranFry\Jars\Contract\Client
             $report->name = $name;
 
             $report->jars($this);
-            $report->filesystem($this->filesystem());
 
             if (method_exists($report, 'init')) {
                 $report->init();
