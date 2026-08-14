@@ -1435,30 +1435,57 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         foreach (array_keys($this->config->reports()) as $name) {
             $report = $this->report($name);
-            $fields = [];
+            $linetypes = [];
 
-            foreach ($this->config->report_fields()[$name] ?? ['id'] as $field) {
-                if (is_string($field)) {
-                    $field = (object) ['name' => $field];
+            foreach ($report->listen as $linetype_name => $details) {
+                if (is_numeric($linetype_name)) {
+                    $linetype_name = $details;
+                    $details = (object) [];
                 }
 
-                if (!@$field->type) {
-                    $field->type = 'string';
-                }
-
-                $fields[] = $field;
+                $linetypes[$linetype_name] = (object) [
+                    'children' => $this->reports_linetypes_r($details->children ?? [], $linetype_name),
+                ];
             }
 
             $reports[] = (object) [
                 'name' => $name,
-                'fields' => $fields,
                 'is_derived' => $report->is_derived(),
+                'linetypes' => $linetypes,
             ];
         }
 
         usort($reports, fn ($a, $b) => $a->name <=> $b->name);
 
         return $reports;
+    }
+
+    public function reports_linetypes_r(array $children, string $linetype_name): array
+    {
+        $sets = [];
+
+        $linetype = $this->linetype($linetype_name);
+
+        foreach ($children as $property => $details) {
+            if (is_numeric($property)) {
+                $property = $details;
+                $details = (object) [];
+            }
+
+            $child = @array_values(array_filter($linetype->children, fn ($child) => $child->property === $property))[0];
+
+            if (!$child) {
+                throw new Exception("Could not determine details of $linetype_name->$property");
+            }
+
+            $sets[$property] = (object) [
+                'linetype' => $child->linetype,
+                'only_parent' => $child->only_parent ?? null,
+                'children' => $this->reports_linetypes_r($details->children ?? [], $child->linetype),
+            ];
+        }
+
+        return $sets;
     }
 
     private function reports_lock_file(): string
