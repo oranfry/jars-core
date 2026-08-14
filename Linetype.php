@@ -151,10 +151,6 @@ class Linetype
 
     public function fieldInfo(): array
     {
-        $newline_fields = $this->jars->config()->respect_newline_fields()[$this->name] ?? [];
-        $download_fields = $this->jars->config()->download_fields()[$this->name] ?? [];
-        $float_dp = $this->jars->config()->float_dp()[$this->name] ?? [];
-
         $fields = [(object) [
             'name' => 'id',
             'src' => 'builtin',
@@ -190,23 +186,10 @@ class Linetype
                 }
 
                 $fields[] = $field = (object) [
-                    'downloadable' => false,
-                    'multiline' => in_array($name, $newline_fields),
                     'name' => $name,
                     'src' => $src,
                     'type' => $fieldType,
                 ];
-
-                if ($fieldType == 'float') {
-                    $field->dp = $float_dp[$name] ?? 0;
-                }
-
-                if ($download = @$download_fields[$name]) {
-                    $field->downloadable = true;
-                    $field->download_extension = @$download->extension;
-                    $field->download_icon = @$download->icon;
-                    $field->download_table = @$download->table;
-                }
             }
         }
 

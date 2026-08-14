@@ -305,6 +305,17 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $dredged;
     }
 
+    public function extra(?string $key = null)
+    {
+        $all = $this->config()->extra();
+
+        if ($key !== null) {
+            return $all[$key] ?? null;
+        }
+
+        return $all;
+    }
+
     public function fields(string $linetype_name): array
     {
         if (!$this->verify_token($this->token())) {
