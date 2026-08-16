@@ -1454,6 +1454,10 @@ class Jars implements \OranFry\Jars\Contract\Client
                     $details = (object) [];
                 }
 
+                if (preg_match('/^report:/', $linetype_name)) {
+                    continue;
+                }
+
                 $linetypes[$linetype_name] = (object) [
                     'children' => $this->reports_linetypes_r($details->children ?? [], $linetype_name),
                 ];
