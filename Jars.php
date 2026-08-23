@@ -1061,6 +1061,11 @@ class Jars implements \OranFry\Jars\Contract\Client
 
         $this->loadVersionInfo();
 
+        $tableinfo = $this->config()->tables()[$table_name] ?? (object) [];
+
+        $content_type = $tableinfo->type ?? 'application/json';
+        $filename = $id . '.' . ($tableinfo->extension ?? 'json');
+
         return Record::of($this, $table_name, $this->head, $id)
             ->currentContents();
     }
