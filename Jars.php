@@ -1070,6 +1070,18 @@ class Jars implements \OranFry\Jars\Contract\Client
             ->currentContents();
     }
 
+    public function recordFile(string $table_name, string $id): ?string
+    {
+        if (!$this->verify_token($this->token())) {
+            throw new BadTokenException;
+        }
+
+        $this->loadVersionInfo();
+
+        return Record::of($this, $table_name, $this->head, $id)
+            ->currentFile();
+    }
+
     public function recordStore(string $key, ?Record $record = null): ?Record
     {
         if (func_num_args() > 1) {

@@ -109,6 +109,36 @@ class Record
         return $contents;
     }
 
+    public function currentFile(): ?string
+    {
+        if (!$this->id) {
+            throw new Exception('Could not generate filename');
+        }
+
+        $bestVersion = 0;
+        $currentFile = null;
+        $dir = dirname($this->jars->dataFile($this->id));
+
+        foreach ($this->jars->filesystem()->list($dir) as $file) {
+            if (!preg_match('/^' . $this->id . '\.r\.' . $this->table . '\.([0-9]+)$/', $file, $matches)) {
+                continue;
+            }
+
+            $version = intval($matches[1]);
+
+            if ($version > $this->version) {
+                continue;
+            }
+
+            if ($version > $bestVersion) {
+                $bestVersion = $version;
+                $currentFile = $dir . '/' . $file;
+            }
+        }
+
+        return $currentFile;
+    }
+
     public function delete(): self
     {
         if (!$this->deleted) {
@@ -207,29 +237,7 @@ class Record
     private function readFile(): ?string
     {
         if (null === $this->file) {
-            if (!$this->id) {
-                throw new Exception('Could not generate filename');
-            }
-
-            $bestVersion = 0;
-            $dir = dirname($this->jars->dataFile($this->id));
-
-            foreach ($this->jars->filesystem()->list($dir) as $file) {
-                if (!preg_match('/^' . $this->id . '\.r\.' . $this->table . '\.([0-9]+)$/', $file, $matches)) {
-                    continue;
-                }
-
-                $version = intval($matches[1]);
-
-                if ($version > $this->version) {
-                    continue;
-                }
-
-                if ($version > $bestVersion) {
-                    $bestVersion = $version;
-                    $this->file = $dir . '/' . $file;
-                }
-            }
+            $this->file = $this->currentFile();
         }
 
         return $this->file;
