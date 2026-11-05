@@ -1550,6 +1550,11 @@ class Jars implements \OranFry\Jars\Contract\Client
         return $result;
     }
 
+    public function saveOne(object $line, ?int $base_version = null): object
+    {
+        return $this->save([$line])[0];
+    }
+
     public function takeANumber(): string
     {
         if (!$this->verify_token($this->token())) {
